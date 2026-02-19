@@ -9,10 +9,11 @@ import (
 )
 
 type Config struct {
-	Auth      AuthConfig      `yaml:"auth"`
-	Cache     string          `yaml:"cache"`
-	Meta      string          `yaml:"meta"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Auth         AuthConfig      `yaml:"auth"`
+	Cache        string          `yaml:"cache"`
+	Meta         string          `yaml:"meta"`
+	RateLimit    RateLimitConfig `yaml:"rate_limit"`
+	FetchTimeout string          `yaml:"fetch_timeout"`
 }
 
 type AuthConfig struct {
@@ -65,6 +66,17 @@ func (r RateLimitConfig) GetMinRecoveryInterval() time.Duration {
 	d, err := time.ParseDuration(r.MinRecoveryInterval)
 	if err != nil {
 		return 10 * time.Second
+	}
+	return d
+}
+
+func (c *Config) GetFetchTimeout() time.Duration {
+	if c == nil || c.FetchTimeout == "" {
+		return 5 * time.Minute
+	}
+	d, err := time.ParseDuration(c.FetchTimeout)
+	if err != nil {
+		return 5 * time.Minute
 	}
 	return d
 }

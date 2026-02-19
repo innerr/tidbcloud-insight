@@ -8,6 +8,8 @@ cache: "./cache"
 
 meta: "./meta"
 
+fetch_timeout: "5m"
+
 rate_limit:
   max_backoff: "5m"
   desired_concurrency: 3

@@ -54,9 +54,14 @@ type Client struct {
 	concurrency   *AdaptiveConcurrencyController
 	bytesReceived int64
 	bytesMu       sync.RWMutex
+	httpClient    *http.Client
 }
 
 func NewClient(c *cache.Cache) *Client {
+	return NewClientWithTimeout(c, 0)
+}
+
+func NewClientWithTimeout(c *cache.Cache, timeout time.Duration) *Client {
 	acc := NewAdaptiveConcurrencyController(DefaultAdaptiveConcurrencyConfig())
 
 	rl := NewRateLimiter(RateLimiterConfig{
@@ -75,10 +80,16 @@ func NewClient(c *cache.Cache) *Client {
 		},
 	})
 
+	httpClient := &http.Client{}
+	if timeout > 0 {
+		httpClient.Timeout = timeout
+	}
+
 	return &Client{
 		cache:       c,
 		rateLimiter: rl,
 		concurrency: acc,
+		httpClient:  httpClient,
 	}
 }
 
@@ -98,6 +109,7 @@ func (c *Client) NewClientWithRateLimit(cfg RateLimiterConfig) *Client {
 		cache:       c.cache,
 		rateLimiter: NewRateLimiter(cfg),
 		concurrency: acc,
+		httpClient:  c.httpClient,
 	}
 }
 
@@ -126,7 +138,12 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		c.rateLimiter.RecordFailure(0, err)
 		return nil, err

@@ -130,7 +130,10 @@ Examples:
 				os.Exit(1)
 			}
 			clusterID := args[0]
-			runDig(c, clusterMeta{clusterID: clusterID}, duration, jsonOutput)
+			if err := runDig(c, clusterMeta{clusterID: clusterID}, duration, jsonOutput); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		},
 	}
 
@@ -166,7 +169,10 @@ func newDigRandomCmd(c *cache.Cache) *cobra.Command {
 				os.Exit(1)
 			}
 			fmt.Printf("Random cluster: %s (%s/%s, %s)\n\n", meta.clusterID, meta.vendor, meta.region, meta.bizType)
-			runDig(c, meta, duration, jsonOutput)
+			if err := runDig(c, meta, duration, jsonOutput); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		},
 	}
 
@@ -310,8 +316,20 @@ func runDigWalk(c *cache.Cache, duration string, concurrency int) {
 		fmt.Printf("============================================================\n")
 
 		startTime := time.Now()
-		runDig(c, meta, duration, false)
+		err := runDig(c, meta, duration, false)
 		elapsed := time.Since(startTime)
+
+		if err != nil {
+			failed++
+			if strings.Contains(err.Error(), "Client.Timeout") || strings.Contains(err.Error(), "context deadline exceeded") {
+				fmt.Printf("\n⏱ Timeout after %s: %v\n", formatDuration(elapsed), err)
+				fmt.Printf("Continuing with next cluster...\n")
+			} else {
+				fmt.Printf("\n✗ Failed after %s: %v\n", formatDuration(elapsed), err)
+			}
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
 		storage = analysis.NewDigStorage(filepath.Join(cacheDir, "dig"))
 		newCached, _ := storage.ListAllClusters()
@@ -807,7 +825,7 @@ func parseClusterLine(line, bizType string) clusterMeta {
 	return clusterMeta{clusterID: clusterID, bizType: bizType}
 }
 
-func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) {
+func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) error {
 	startTime := time.Now()
 	durationSeconds := parseDuration(duration)
 
@@ -825,7 +843,12 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 		fmt.Printf("Querying cluster info for: %s\n", clusterID)
 	}
 
-	cl := client.NewClient(c)
+	cfg := config.Get()
+	fetchTimeout := 5 * time.Minute
+	if cfg != nil {
+		fetchTimeout = cfg.GetFetchTimeout()
+	}
+	cl := client.NewClientWithTimeout(c, fetchTimeout)
 	var cluster *client.Cluster
 	ctx := context.Background()
 
@@ -885,8 +908,7 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 	}
 
 	if cluster == nil {
-		fmt.Fprintf(os.Stderr, "No cluster found for %s\n", clusterID)
-		os.Exit(1)
+		return fmt.Errorf("no cluster found for %s", clusterID)
 	}
 
 	provider := cluster.Vendor
@@ -902,8 +924,7 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 	}
 
 	if dsURL == "" {
-		fmt.Fprintln(os.Stderr, "No internal URL available")
-		os.Exit(1)
+		return fmt.Errorf("no internal URL available")
 	}
 
 	endTS := int(time.Now().Unix())
@@ -936,12 +957,13 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 		} else {
 			fmt.Fprintln(os.Stderr, "No QPS data found")
 		}
-		return
+		return nil
 	}
 
 	topology := fetchClusterTopology(ctx, cl, dsURL)
 
 	runDigAnalysis(clusterID, provider, region, bizType, qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult, durationSeconds, jsonOutput, startTime, topology)
+	return nil
 }
 
 type ClusterTopology struct {
