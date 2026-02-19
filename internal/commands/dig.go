@@ -701,6 +701,13 @@ func runDigAnalysisFromRawData(clusterID string, timestamp int64, rawData *analy
 		}
 	}
 
+	if len(qpsTimeSeries) >= 64 {
+		advancedProfiling := analysis.AnalyzeAdvancedProfile(qpsTimeSeries, analysis.DefaultAdvancedProfilingConfig())
+		if advancedProfiling != nil {
+			analysis.PrintAdvancedProfiling(advancedProfiling)
+		}
+	}
+
 	elapsed := time.Since(startTime)
 	fmt.Printf("\nRe-analysis completed in %s\n", formatDuration(elapsed))
 }
@@ -912,6 +919,7 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 
 	qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult := fetchDigMetricsConcurrent(ctx, cl, dsURL, startTS, endTS, initialStep, jsonOutput)
 	if qpsResult == nil {
+		saveInactiveCluster(clusterID)
 		if jsonOutput {
 			json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
 				"error":      "No QPS data",
@@ -995,9 +1003,9 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 				mu.Lock()
 				completed++
 				if err != nil {
-					fmt.Printf("  [%d/%d] %s: FAILED (%v)\n", completed, total, name, err)
+					fmt.Printf("  * (%d/%d) %s: FAILED (%v)\n", completed, total, name, err)
 				} else {
-					fmt.Printf("  [%d/%d] %s: OK\n", completed, total, name)
+					fmt.Printf("  * (%d/%d) %s: OK\n", completed, total, name)
 				}
 				mu.Unlock()
 			}
@@ -1042,7 +1050,7 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 				}
 				bytesInfo := formatBytes(cl.GetBytesReceived())
 				if pending > 0 {
-					fmt.Printf("[INFO] Still fetching metrics%s, %d/%d completed, %s received...\n", concurrencyInfo, completed, total, bytesInfo)
+					fmt.Printf("  [INFO] Still fetching metrics%s, %d/%d completed, %s received...\n", concurrencyInfo, completed, total, bytesInfo)
 				}
 				mu.Unlock()
 			}

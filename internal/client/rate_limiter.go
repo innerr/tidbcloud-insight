@@ -4,25 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"tidbcloud-insight/internal/backoff"
 	"tidbcloud-insight/internal/config"
 )
-
-func goroutineID() string {
-	b := make([]byte, 64)
-	b = b[:runtime.Stack(b, false)]
-	s := string(b)
-	s = s[strings.Index(s, "goroutine ")+10:]
-	s = s[:strings.Index(s, " ")]
-	id, _ := strconv.ParseInt(s, 10, 64)
-	return fmt.Sprintf("g%d", id%1000)
-}
 
 type RateLimiterConfig struct {
 	MaxRequestsPerSecond     int
@@ -58,13 +45,14 @@ type RateLimiter struct {
 	backoffUntil           time.Time
 	backoffStartTime       time.Time
 	currentBackoffInterval time.Duration
-	backoffWaiters         int
 	consecutiveFails       int
-	backoffCount           int
 
 	recentRequests []time.Time
 	windowSize     time.Duration
 	rand           *rand.Rand
+
+	cond           *sync.Cond
+	activeRequests int
 }
 
 func DefaultRateLimiterConfig() RateLimiterConfig {
@@ -109,7 +97,7 @@ func NewRateLimiter(cfg RateLimiterConfig) *RateLimiter {
 		backoff.WithMaxElapsedTime(30*time.Minute),
 	)
 
-	return &RateLimiter{
+	rl := &RateLimiter{
 		maxRequestsPerSecond:     cfg.MaxRequestsPerSecond,
 		minInterval:              cfg.MinInterval,
 		consecutiveFailThreshold: cfg.ConsecutiveFailThreshold,
@@ -123,6 +111,8 @@ func NewRateLimiter(cfg RateLimiterConfig) *RateLimiter {
 		recentRequests:           make([]time.Time, 0),
 		rand:                     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
+	rl.cond = sync.NewCond(&rl.mu)
+	return rl
 }
 
 func (r *RateLimiter) addJitter(d time.Duration, factor float64) time.Duration {
@@ -140,38 +130,72 @@ func formatDuration(d time.Duration) string {
 	return d.Round(100 * time.Millisecond).String()
 }
 
+func (r *RateLimiter) getConcurrencyInfo() string {
+	r.mu.Lock()
+	active := r.activeRequests
+	r.mu.Unlock()
+	if r.getConcurrencyFunc != nil {
+		return fmt.Sprintf(", concurrency: %d, active: %d", r.getConcurrencyFunc(), active)
+	}
+	return fmt.Sprintf(", active: %d", active)
+}
+
 func (r *RateLimiter) Wait(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.activeRequests++
+	r.mu.Unlock()
 
-	if r.inBackoff {
+	defer func() {
+		r.mu.Lock()
+		r.activeRequests--
+		r.mu.Unlock()
+	}()
+
+	r.mu.Lock()
+
+	for r.inBackoff {
 		remaining := time.Until(r.backoffUntil)
-		if remaining > 0 {
-			r.backoffWaiters++
-			waitDuration := remaining
-			waitDuration = r.addJitter(waitDuration, 0.1)
-
-			if r.verbose {
-				concurrencyInfo := ""
-				if r.getConcurrencyFunc != nil {
-					concurrencyInfo = fmt.Sprintf(", concurrency: %d", r.getConcurrencyFunc())
-				}
-				gidInfo := ""
-				if r.backoffWaiters > 1 {
-					gidInfo = fmt.Sprintf(" [%s]", goroutineID())
-				}
-				fmt.Printf("[WARN] Rate limited%s%s, backing off for %s...\n", concurrencyInfo, gidInfo, formatDuration(waitDuration))
-			}
-			r.mu.Unlock()
-			if !r.waitWithProgress(ctx, waitDuration) {
-				r.mu.Lock()
-				r.backoffWaiters--
-				return ctx.Err()
-			}
-			r.mu.Lock()
-			r.backoffWaiters--
+		if remaining <= 0 {
+			r.inBackoff = false
+			break
 		}
-		r.inBackoff = false
+
+		if r.verbose {
+			fmt.Printf("  [INFO] Rate limited%s, waiting %s...\n",
+				r.getConcurrencyInfo(), formatDuration(remaining))
+		}
+
+		waitCh := make(chan struct{})
+		go func() {
+			time.Sleep(remaining + 100*time.Millisecond)
+			r.cond.Broadcast()
+			close(waitCh)
+		}()
+
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				r.cond.Broadcast()
+			case <-done:
+			}
+		}()
+
+		r.cond.Wait()
+		close(done)
+
+		select {
+		case <-ctx.Done():
+			<-waitCh
+			r.mu.Unlock()
+			return ctx.Err()
+		default:
+		}
+		<-waitCh
+
+		if time.Now().After(r.backoffUntil) {
+			r.inBackoff = false
+		}
 	}
 
 	now := time.Now()
@@ -186,7 +210,6 @@ func (r *RateLimiter) Wait(ctx context.Context) error {
 		r.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			r.mu.Lock()
 			return ctx.Err()
 		case <-time.After(waitDuration):
 		}
@@ -202,7 +225,6 @@ func (r *RateLimiter) Wait(ctx context.Context) error {
 			r.mu.Unlock()
 			select {
 			case <-ctx.Done():
-				r.mu.Lock()
 				return ctx.Err()
 			case <-time.After(waitDuration):
 			}
@@ -215,47 +237,8 @@ func (r *RateLimiter) Wait(ctx context.Context) error {
 	r.recentRequests = append(r.recentRequests, now)
 	r.totalRequests++
 
+	r.mu.Unlock()
 	return nil
-}
-
-func (r *RateLimiter) waitWithProgress(ctx context.Context, totalWait time.Duration) bool {
-	if r.progressInterval <= 0 || totalWait <= r.progressInterval {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(totalWait):
-			return true
-		}
-	}
-
-	deadline := time.Now().Add(totalWait)
-	ticker := time.NewTicker(r.progressInterval)
-	defer ticker.Stop()
-
-	showGID := r.backoffWaiters > 1
-
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-ticker.C:
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return true
-			}
-			if r.verbose {
-				concurrencyInfo := ""
-				if r.getConcurrencyFunc != nil {
-					concurrencyInfo = fmt.Sprintf(", concurrency: %d", r.getConcurrencyFunc())
-				}
-				gidInfo := ""
-				if showGID {
-					gidInfo = fmt.Sprintf(" [%s]", goroutineID())
-				}
-				fmt.Printf("[INFO] Still waiting for rate limit to expire%s%s, %s remaining...\n", concurrencyInfo, gidInfo, formatDuration(remaining))
-			}
-		}
-	}
 }
 
 func (r *RateLimiter) IsInBackoff() bool {
@@ -315,17 +298,14 @@ func (r *RateLimiter) RecordFailure(statusCode int, err error) {
 		r.backoffUntil = now.Add(interval)
 		r.currentBackoffInterval = interval
 		r.inBackoff = true
-		r.backoffWaiters = 0
 
 		if r.verbose {
-			concurrencyInfo := ""
-			if r.getConcurrencyFunc != nil {
-				concurrencyInfo = fmt.Sprintf(", concurrency: %d", r.getConcurrencyFunc())
-			}
 			if isRateLimit {
-				fmt.Printf("[WARN] Rate limited by server (HTTP %d)%s, backing off for %s...\n", statusCode, concurrencyInfo, formatDuration(interval))
+				fmt.Printf("  [WARN] Rate limited by server (HTTP %d)%s, backing off for %s\n",
+					statusCode, r.getConcurrencyInfo(), formatDuration(interval))
 			} else {
-				fmt.Printf("[WARN] Request rate slowed: %d consecutive failures%s, backing off for %s...\n", r.consecutiveFails, concurrencyInfo, formatDuration(interval))
+				fmt.Printf("  [WARN] Request failures: %d consecutive%s, backing off for %s\n",
+					r.consecutiveFails, r.getConcurrencyInfo(), formatDuration(interval))
 			}
 		}
 
@@ -344,10 +324,7 @@ func (r *RateLimiter) GetStats() (total, success, failed int64) {
 func (r *RateLimiter) PrintStats() {
 	total, success, failed := r.GetStats()
 	if total > 0 {
-		concurrencyInfo := ""
-		if r.getConcurrencyFunc != nil {
-			concurrencyInfo = fmt.Sprintf(", current concurrency: %d", r.getConcurrencyFunc())
-		}
-		fmt.Printf("[INFO] Rate limiter stats: %d requests, %d success, %d failed%s\n", total, success, failed, concurrencyInfo)
+		fmt.Printf("[INFO] Rate limiter stats: %d requests, %d success, %d failed%s\n",
+			total, success, failed, r.getConcurrencyInfo())
 	}
 }

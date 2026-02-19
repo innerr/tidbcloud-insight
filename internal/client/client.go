@@ -129,9 +129,6 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		c.rateLimiter.RecordFailure(0, err)
-		if c.concurrency != nil {
-			c.concurrency.OnRateLimited()
-		}
 		return nil, err
 	}
 
@@ -144,9 +141,6 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 
 	if resp.StatusCode == 429 || resp.StatusCode == 503 {
 		c.rateLimiter.RecordFailure(resp.StatusCode, nil)
-		if c.concurrency != nil {
-			c.concurrency.OnRateLimited()
-		}
 		resp.Body.Close()
 		return nil, fmt.Errorf("rate limited: HTTP %d", resp.StatusCode)
 	}
