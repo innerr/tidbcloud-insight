@@ -324,7 +324,7 @@ func runDigWalk(c *cache.Cache, duration string, concurrency int) {
 
 		if err != nil {
 			failed++
-			if strings.Contains(err.Error(), "Client.Timeout") || strings.Contains(err.Error(), "context deadline exceeded") {
+			if strings.Contains(err.Error(), "Client.Timeout") || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "idle timeout") {
 				fmt.Printf("\n⏱ Timeout after %s: %v\n", formatDuration(elapsed), err)
 				fmt.Printf("Continuing with next cluster...\n")
 			} else {
@@ -857,11 +857,11 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 	}
 
 	cfg := config.Get()
-	fetchTimeout := 5 * time.Minute
+	idleTimeout := 3 * time.Minute
 	if cfg != nil {
-		fetchTimeout = cfg.GetFetchTimeout()
+		idleTimeout = cfg.GetIdleTimeout()
 	}
-	cl := client.NewClientWithTimeout(c, fetchTimeout)
+	cl := client.NewClientWithTimeout(c, 0, idleTimeout)
 	var cluster *client.Cluster
 	ctx := context.Background()
 

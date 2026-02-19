@@ -55,13 +55,14 @@ type Client struct {
 	bytesReceived int64
 	bytesMu       sync.RWMutex
 	httpClient    *http.Client
+	idleTimeout   time.Duration
 }
 
 func NewClient(c *cache.Cache) *Client {
-	return NewClientWithTimeout(c, 0)
+	return NewClientWithTimeout(c, 0, 0)
 }
 
-func NewClientWithTimeout(c *cache.Cache, timeout time.Duration) *Client {
+func NewClientWithTimeout(c *cache.Cache, timeout time.Duration, idleTimeout time.Duration) *Client {
 	acc := NewAdaptiveConcurrencyController(DefaultAdaptiveConcurrencyConfig())
 
 	rl := NewRateLimiter(RateLimiterConfig{
@@ -80,9 +81,22 @@ func NewClientWithTimeout(c *cache.Cache, timeout time.Duration) *Client {
 		},
 	})
 
-	httpClient := &http.Client{}
+	transport := &http.Transport{
+		MaxIdleConns:        10,
+		IdleConnTimeout:     30 * time.Second,
+		DisableCompression:  false,
+		MaxIdleConnsPerHost: 5,
+	}
+
+	httpClient := &http.Client{
+		Transport: transport,
+	}
 	if timeout > 0 {
 		httpClient.Timeout = timeout
+	}
+
+	if idleTimeout <= 0 {
+		idleTimeout = 3 * time.Minute
 	}
 
 	return &Client{
@@ -90,6 +104,7 @@ func NewClientWithTimeout(c *cache.Cache, timeout time.Duration) *Client {
 		rateLimiter: rl,
 		concurrency: acc,
 		httpClient:  httpClient,
+		idleTimeout: idleTimeout,
 	}
 }
 
@@ -378,7 +393,7 @@ func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, e
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := c.readBodyWithIdleTimeout(ctx, resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -391,6 +406,64 @@ func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, e
 	}
 
 	return result, nil
+}
+
+func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([]byte, error) {
+	if c.idleTimeout <= 0 {
+		return io.ReadAll(body)
+	}
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+
+	resultChan := make(chan readResult, 1)
+	progressChan := make(chan struct{}, 100)
+	idleTimer := time.NewTimer(c.idleTimeout)
+	defer idleTimer.Stop()
+
+	go func() {
+		buf := make([]byte, 32*1024)
+		var allData []byte
+		for {
+			n, err := body.Read(buf)
+			if n > 0 {
+				allData = append(allData, buf[:n]...)
+				select {
+				case progressChan <- struct{}{}:
+				default:
+				}
+			}
+			if err != nil {
+				if err == io.EOF {
+					resultChan <- readResult{data: allData, err: nil}
+				} else {
+					resultChan <- readResult{data: allData, err: err}
+				}
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-idleTimer.C:
+			return nil, fmt.Errorf("idle timeout after %v (no progress)", c.idleTimeout)
+		case result := <-resultChan:
+			return result.data, result.err
+		case <-progressChan:
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(c.idleTimeout)
+		}
+	}
 }
 
 func (c *Client) QueryMetricWithRetry(ctx context.Context, dsURL, metric string, start, end, initialStep int) (map[string]interface{}, int, error) {
