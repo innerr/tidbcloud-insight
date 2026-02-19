@@ -228,6 +228,11 @@ func runDigWalk(c *cache.Cache, duration string, concurrency int) {
 		metaDir = "./meta"
 	}
 
+	inactive := loadInactiveClusters()
+	if len(inactive) > 0 {
+		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
+	}
+
 	processed := 0
 	failed := 0
 	skipped := 0
@@ -285,8 +290,6 @@ func runDigWalk(c *cache.Cache, duration string, concurrency int) {
 		for _, c := range cachedClusters {
 			cachedSet[c] = true
 		}
-
-		inactive := loadInactiveClusters()
 
 		var pending []clusterMeta
 		for id, meta := range allClusters {
@@ -383,23 +386,30 @@ func runDigFromLocalCache(jsonOutput bool) {
 	}
 
 	inactive := loadInactiveClusters()
+	if len(inactive) > 0 {
+		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
+	}
+
+	var availableClusters []string
+	for _, c := range clusters {
+		if !inactive[c] {
+			availableClusters = append(availableClusters, c)
+		}
+	}
+
+	if len(availableClusters) == 0 {
+		fmt.Fprintln(os.Stderr, "All cached clusters are inactive. Try fetching new data with 'dig random'.")
+		os.Exit(1)
+	}
 
 	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(clusters), func(i, j int) {
-		clusters[i], clusters[j] = clusters[j], clusters[i]
+	rand.Shuffle(len(availableClusters), func(i, j int) {
+		availableClusters[i], availableClusters[j] = availableClusters[j], availableClusters[i]
 	})
 
 	excludedClusters := make(map[string]bool)
-	for k, v := range inactive {
-		excludedClusters[k] = v
-	}
 
-	for _, selectedCluster := range clusters {
-		if inactive[selectedCluster] {
-			fmt.Printf("Skipping inactive cluster: %s\n", selectedCluster)
-			continue
-		}
-
+	for _, selectedCluster := range availableClusters {
 		timestamp, err := storage.GetLatestTimestamp(selectedCluster)
 		if err != nil {
 			continue
@@ -425,7 +435,7 @@ func runDigFromLocalCache(jsonOutput bool) {
 		if isLowActivity {
 			excludedClusters[selectedCluster] = true
 			saveInactiveCluster(selectedCluster)
-			if len(excludedClusters) >= len(clusters) {
+			if len(excludedClusters) >= len(availableClusters) {
 				fmt.Fprintln(os.Stderr, "All cached clusters are low activity. Try fetching new data with 'dig random'.")
 				os.Exit(1)
 			}
@@ -747,6 +757,11 @@ func pickRandomCluster(bizType string) (clusterMeta, error) {
 		metaDir = "./meta"
 	}
 
+	inactive := loadInactiveClusters()
+	if len(inactive) > 0 {
+		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
+	}
+
 	var files []struct {
 		path    string
 		bizType string
@@ -767,8 +782,6 @@ func pickRandomCluster(bizType string) (clusterMeta, error) {
 			{filepath.Join(metaDir, bizType, "clusters.txt"), bizType},
 		}
 	}
-
-	inactive := loadInactiveClusters()
 
 	var allClusters []clusterMeta
 	for _, f := range files {
