@@ -27,12 +27,22 @@ func DefaultAdvancedProfilingConfig() AdvancedProfilingConfig {
 	}
 }
 
+type SQLTypeMultimodal struct {
+	Type        string    `json:"type"`
+	SampleCount int       `json:"sample_count"`
+	Multimodal  bool      `json:"multimodal"`
+	NumModes    int       `json:"num_modes"`
+	DipPValue   float64   `json:"dip_p_value"`
+	ModeValues  []float64 `json:"mode_values,omitempty"`
+}
+
 type AdvancedProfilingResult struct {
-	FrequencyDomain   FrequencyAnalysis  `json:"frequency_domain"`
-	Multimodal        MultimodalAnalysis `json:"multimodal"`
-	TailDistribution  TailDistribution   `json:"tail_distribution"`
-	VolatilityMetrics VolatilityMetrics  `json:"volatility_metrics"`
-	RegimeDetection   RegimeAnalysis     `json:"regime_detection"`
+	FrequencyDomain   FrequencyAnalysis   `json:"frequency_domain"`
+	Multimodal        MultimodalAnalysis  `json:"multimodal"`
+	TailDistribution  TailDistribution    `json:"tail_distribution"`
+	VolatilityMetrics VolatilityMetrics   `json:"volatility_metrics"`
+	RegimeDetection   RegimeAnalysis      `json:"regime_detection"`
+	SQLTypeMultimodal []SQLTypeMultimodal `json:"sql_type_multimodal,omitempty"`
 }
 
 type FrequencyAnalysis struct {
@@ -90,6 +100,10 @@ type RegimeAnalysis struct {
 }
 
 func AnalyzeAdvancedProfile(values []TimeSeriesPoint, config AdvancedProfilingConfig) *AdvancedProfilingResult {
+	return AnalyzeAdvancedProfileWithSQLTypes(values, nil, config)
+}
+
+func AnalyzeAdvancedProfileWithSQLTypes(values []TimeSeriesPoint, sqlTypeData map[string][]TimeSeriesPoint, config AdvancedProfilingConfig) *AdvancedProfilingResult {
 	if len(values) < 24 {
 		return nil
 	}
@@ -116,6 +130,10 @@ func AnalyzeAdvancedProfile(values []TimeSeriesPoint, config AdvancedProfilingCo
 
 	result.VolatilityMetrics = analyzeVolatility(vals)
 	result.RegimeDetection = analyzeRegimes(vals)
+
+	if config.EnableMultimodal && len(sqlTypeData) > 0 {
+		result.SQLTypeMultimodal = analyzeSQLTypeMultimodal(sqlTypeData)
+	}
 
 	return result
 }
@@ -266,6 +284,52 @@ func analyzeMultimodal(vals []float64) MultimodalAnalysis {
 	}
 
 	return result
+}
+
+func analyzeSQLTypeMultimodal(sqlTypeData map[string][]TimeSeriesPoint) []SQLTypeMultimodal {
+	var results []SQLTypeMultimodal
+
+	for sqlType, points := range sqlTypeData {
+		if len(points) < 24 {
+			continue
+		}
+
+		vals := extractValues(points)
+		if len(vals) < 24 {
+			continue
+		}
+
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		if sum == 0 {
+			continue
+		}
+
+		analysis := SQLTypeMultimodal{
+			Type:        sqlType,
+			SampleCount: len(vals),
+		}
+
+		_, pValue := hartiganDipTest(vals)
+		analysis.DipPValue = pValue
+		analysis.Multimodal = pValue < 0.05
+
+		modes := findModes(vals)
+		analysis.NumModes = len(modes)
+		if len(modes) > 0 && len(modes) <= 5 {
+			analysis.ModeValues = modes
+		}
+
+		results = append(results, analysis)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].DipPValue < results[j].DipPValue
+	})
+
+	return results
 }
 
 func hartiganDipTest(vals []float64) (float64, float64) {
@@ -734,6 +798,27 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 		dipDesc = "moderately multimodal"
 	}
 	fmt.Printf("  Dip Test p-value: %.4f [0-1, <0.05=multimodal] => %s\n", result.Multimodal.DipPValue, dipDesc)
+
+	if len(result.SQLTypeMultimodal) > 0 {
+		fmt.Println("\n--- SQL Type Multimodal Analysis")
+		fmt.Println("  (Checks if each SQL type has distinct workload levels)")
+		for _, sm := range result.SQLTypeMultimodal {
+			modalStr := "NO"
+			if sm.Multimodal {
+				modalStr = fmt.Sprintf("YES (%d modes)", sm.NumModes)
+			}
+			dipStr := "unimodal"
+			if sm.DipPValue < 0.01 {
+				dipStr = "strongly multimodal"
+			} else if sm.DipPValue < 0.05 {
+				dipStr = "moderately multimodal"
+			}
+			fmt.Printf("  %s: %s (p=%.4f => %s)\n", sm.Type, modalStr, sm.DipPValue, dipStr)
+			if len(sm.ModeValues) > 0 {
+				fmt.Printf("    Mode Values (QPS levels): %v\n", formatFloatSlice(sm.ModeValues))
+			}
+		}
+	}
 
 	fmt.Println("\n--- Tail Distribution")
 	fmt.Println("  (Analyzes extreme values and spike behavior)")

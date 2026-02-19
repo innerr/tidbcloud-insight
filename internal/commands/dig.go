@@ -1348,6 +1348,7 @@ func runDigAnalysis(clusterID, provider, region, bizType string, qpsResult, late
 	var anomalies []map[string]interface{}
 	var workloadProfile *analysis.WorkloadProfile
 	var loadProfile *analysis.LoadProfile
+	var sqlTypeTS map[string][]analysis.TimeSeriesPoint
 	latencyP99 := calcLatencyP99Series(latencyData)
 
 	if isLowActivity {
@@ -1373,7 +1374,7 @@ func runDigAnalysis(clusterID, provider, region, bizType string, qpsResult, late
 		tikvLatencyP99 := calcTiKVLatencyP99Series(tikvLatencyData)
 
 		if len(sqlTypeRates) > 0 || len(tikvOpRates) > 0 {
-			sqlTypeTS := convertToTimeSeriesMap(sqlTypeRates)
+			sqlTypeTS = convertToTimeSeriesMap(sqlTypeRates)
 			tikvOpTS := convertToTimeSeriesMap(tikvOpRates)
 
 			workloadProfile = analysis.AnalyzeWorkloadProfile(sqlTypeTS, nil, tikvOpTS, nil)
@@ -1498,7 +1499,7 @@ func runDigAnalysis(clusterID, provider, region, bizType string, qpsResult, late
 
 	var advancedProfiling *analysis.AdvancedProfilingResult
 	if len(qpsTimeSeries) >= 64 {
-		advancedProfiling = analysis.AnalyzeAdvancedProfile(qpsTimeSeries, analysis.DefaultAdvancedProfilingConfig())
+		advancedProfiling = analysis.AnalyzeAdvancedProfileWithSQLTypes(qpsTimeSeries, sqlTypeTS, analysis.DefaultAdvancedProfilingConfig())
 		if advancedProfiling != nil && loadProfile != nil {
 			loadProfile.EnhanceWithAdvancedAnalysis(qpsTimeSeries)
 		}
