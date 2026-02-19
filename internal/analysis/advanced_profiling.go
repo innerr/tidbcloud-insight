@@ -969,20 +969,39 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 	if len(result.SQLTypeMultimodal) > 0 {
 		fmt.Println("\n--- SQL Type Multimodal Analysis")
 		fmt.Println("  (Checks if each SQL type has distinct workload levels)")
+		type multimodalGroupKey struct {
+			isMultimodal bool
+			numModes     int
+		}
+		groupedByMultimodal := make(map[multimodalGroupKey][]SQLTypeMultimodal)
 		for _, sm := range result.SQLTypeMultimodal {
-			modalStr := "NO"
-			if sm.Multimodal {
-				modalStr = fmt.Sprintf("YES (%d modes)", sm.NumModes)
-			}
-			dipStr := "unimodal"
-			if sm.DipPValue < 0.01 {
-				dipStr = "strongly multimodal"
-			} else if sm.DipPValue < 0.05 {
-				dipStr = "moderately multimodal"
-			}
-			fmt.Printf("  %s: %s (p=%.4f => %s)\n", sm.Type, modalStr, sm.DipPValue, dipStr)
-			if len(sm.ModeValues) > 0 {
-				fmt.Printf("    Mode Values (QPS levels): %v\n", formatFloatSlice(sm.ModeValues))
+			key := multimodalGroupKey{isMultimodal: sm.Multimodal, numModes: sm.NumModes}
+			groupedByMultimodal[key] = append(groupedByMultimodal[key], sm)
+		}
+		for _, isMultimodal := range []bool{true, false} {
+			for numModes := 1; numModes <= 10; numModes++ {
+				key := multimodalGroupKey{isMultimodal: isMultimodal, numModes: numModes}
+				items := groupedByMultimodal[key]
+				if len(items) == 0 {
+					continue
+				}
+				var types []string
+				for _, sm := range items {
+					types = append(types, sm.Type)
+				}
+				if isMultimodal {
+					if len(types) == len(result.SQLTypeMultimodal) {
+						fmt.Printf("  ALL types: multimodal (%d modes)\n", numModes)
+					} else {
+						fmt.Printf("  %s: multimodal (%d modes)\n", strings.Join(types, ", "), numModes)
+					}
+				} else {
+					if len(types) == len(result.SQLTypeMultimodal) {
+						fmt.Printf("  ALL types: unimodal (single workload level)\n")
+					} else {
+						fmt.Printf("  %s: unimodal (single workload level)\n", strings.Join(types, ", "))
+					}
+				}
 			}
 		}
 	}
@@ -1020,22 +1039,42 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 	if len(result.SQLTypeTailDistribution) > 0 {
 		fmt.Println("\n--- SQL Type Tail Distribution")
 		fmt.Println("  (Analyzes extreme values for each SQL type)")
+		groupedByTail := make(map[string][]SQLTypeTailDistribution)
 		for _, st := range result.SQLTypeTailDistribution {
 			tailTypeStr := st.TailType
 			if tailTypeStr == "" {
-				tailTypeStr = "unknown"
+				tailTypeStr = "light"
+			}
+			groupedByTail[tailTypeStr] = append(groupedByTail[tailTypeStr], st)
+		}
+		for _, tailType := range []string{"heavy", "moderate", "light"} {
+			items := groupedByTail[tailType]
+			if len(items) == 0 {
+				continue
+			}
+			var types []string
+			var estSum float64
+			var estCount int
+			for _, st := range items {
+				types = append(types, st.Type)
+				if st.ExtremeValueEst > 0 {
+					estSum += st.ExtremeValueEst
+					estCount++
+				}
 			}
 			tailTypeDesc := "light"
-			if st.TailIndex > 1.5 {
-				tailTypeDesc = "very heavy"
-			} else if st.TailIndex > 1.0 {
-				tailTypeDesc = "heavy"
-			} else if st.TailIndex > 0.5 {
-				tailTypeDesc = "moderate"
+			if tailType == "heavy" {
+				tailTypeDesc = "heavy (frequent extreme spikes)"
+			} else if tailType == "moderate" {
+				tailTypeDesc = "moderate (occasional spikes)"
 			}
-			fmt.Printf("  %s: %s (index=%.3f => %s)\n", st.Type, strings.ToUpper(tailTypeStr), st.TailIndex, tailTypeDesc)
-			if st.ExtremeValueEst > 0 {
-				fmt.Printf("    Predicted Extreme (P99.9): %.0f\n", st.ExtremeValueEst)
+			if len(types) == len(result.SQLTypeTailDistribution) {
+				fmt.Printf("  ALL types: %s tail => %s\n", strings.ToUpper(tailType), tailTypeDesc)
+			} else {
+				fmt.Printf("  %s: %s tail => %s\n", strings.Join(types, ", "), strings.ToUpper(tailType), tailTypeDesc)
+			}
+			if estCount > 0 {
+				fmt.Printf("    Predicted Extreme (P99.9): avg=%.0f\n", estSum/float64(estCount))
 			}
 		}
 	}
@@ -1088,22 +1127,56 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 	if len(result.SQLTypeVolatilityMetrics) > 0 {
 		fmt.Println("\n--- SQL Type Volatility Metrics")
 		fmt.Println("  (Measures traffic stability for each SQL type)")
+		type volGroupKey struct {
+			level string
+			ratio string
+		}
+		groupedByVol := make(map[volGroupKey][]SQLTypeVolatilityMetrics)
 		for _, sv := range result.SQLTypeVolatilityMetrics {
-			volDesc := "low"
+			level := "low"
 			if sv.RealizedVolatility > 1.0 {
-				volDesc = "very high"
+				level = "very_high"
 			} else if sv.RealizedVolatility > 0.5 {
-				volDesc = "high"
+				level = "high"
 			} else if sv.RealizedVolatility > 0.2 {
-				volDesc = "moderate"
+				level = "moderate"
 			}
-			fmt.Printf("  %s: volatility=%.4f => %s variability", sv.Type, sv.RealizedVolatility, volDesc)
+			ratio := "normal"
 			if sv.VolatilityRatio > 1.5 {
-				fmt.Printf(", ratio=%.2f (ELEVATED)", sv.VolatilityRatio)
+				ratio = "elevated"
 			} else if sv.VolatilityRatio < 0.7 {
-				fmt.Printf(", ratio=%.2f (LOW)", sv.VolatilityRatio)
+				ratio = "low"
 			}
-			fmt.Println()
+			key := volGroupKey{level: level, ratio: ratio}
+			groupedByVol[key] = append(groupedByVol[key], sv)
+		}
+		for _, level := range []string{"very_high", "high", "moderate", "low"} {
+			for _, ratio := range []string{"elevated", "normal", "low"} {
+				key := volGroupKey{level: level, ratio: ratio}
+				items := groupedByVol[key]
+				if len(items) == 0 {
+					continue
+				}
+				var types []string
+				for _, sv := range items {
+					types = append(types, sv.Type)
+				}
+				levelDesc := level
+				if level == "very_high" {
+					levelDesc = "very high"
+				}
+				ratioDesc := ""
+				if ratio == "elevated" {
+					ratioDesc = " (ELEVATED - recent instability)"
+				} else if ratio == "low" {
+					ratioDesc = " (LOW - recently calmer)"
+				}
+				if len(types) == len(result.SQLTypeVolatilityMetrics) {
+					fmt.Printf("  ALL types: %s variability%s\n", levelDesc, ratioDesc)
+				} else {
+					fmt.Printf("  %s: %s variability%s\n", strings.Join(types, ", "), levelDesc, ratioDesc)
+				}
+			}
 		}
 	}
 
@@ -1126,16 +1199,28 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 	if len(result.SQLTypeRegimeDetection) > 0 {
 		fmt.Println("\n--- SQL Type Regime Detection")
 		fmt.Println("  (Identifies distinct operational states for each SQL type)")
+		groupedByRegime := make(map[int][]SQLTypeRegimeDetection)
 		for _, sr := range result.SQLTypeRegimeDetection {
-			regimeStr := "stable"
-			if sr.NumRegimes > 1 {
-				regimeStr = fmt.Sprintf("%d distinct modes", sr.NumRegimes)
+			groupedByRegime[sr.NumRegimes] = append(groupedByRegime[sr.NumRegimes], sr)
+		}
+		for numRegimes := 1; numRegimes <= 5; numRegimes++ {
+			items := groupedByRegime[numRegimes]
+			if len(items) == 0 {
+				continue
 			}
-			fmt.Printf("  %s: %s", sr.Type, regimeStr)
-			if sr.NumRegimes > 1 && len(sr.RegimeMeans) > 0 && len(sr.RegimeMeans) <= 5 {
-				fmt.Printf(" (means: %v)", formatFloatSlice(sr.RegimeMeans))
+			var types []string
+			for _, sr := range items {
+				types = append(types, sr.Type)
 			}
-			fmt.Println()
+			regimeDesc := "stable"
+			if numRegimes > 1 {
+				regimeDesc = fmt.Sprintf("%d distinct operational modes", numRegimes)
+			}
+			if len(types) == len(result.SQLTypeRegimeDetection) {
+				fmt.Printf("  ALL types: %s\n", regimeDesc)
+			} else {
+				fmt.Printf("  %s: %s\n", strings.Join(types, ", "), regimeDesc)
+			}
 		}
 	}
 
