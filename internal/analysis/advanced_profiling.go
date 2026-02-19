@@ -36,13 +36,44 @@ type SQLTypeMultimodal struct {
 	ModeValues  []float64 `json:"mode_values,omitempty"`
 }
 
+type SQLTypeTailDistribution struct {
+	Type            string  `json:"type"`
+	SampleCount     int     `json:"sample_count"`
+	TailType        string  `json:"tail_type"`
+	TailIndex       float64 `json:"tail_index"`
+	GPDShape        float64 `json:"gpd_shape"`
+	GPDScale        float64 `json:"gpd_scale"`
+	ExtremeValueEst float64 `json:"extreme_value_est"`
+}
+
+type SQLTypeVolatilityMetrics struct {
+	Type               string  `json:"type"`
+	SampleCount        int     `json:"sample_count"`
+	RealizedVolatility float64 `json:"realized_volatility"`
+	ParkinsonHL        float64 `json:"parkinson_hl"`
+	VolOfVol           float64 `json:"vol_of_vol"`
+	VolatilityRatio    float64 `json:"volatility_ratio"`
+	LeverageEffect     float64 `json:"leverage_effect"`
+}
+
+type SQLTypeRegimeDetection struct {
+	Type        string    `json:"type"`
+	SampleCount int       `json:"sample_count"`
+	NumRegimes  int       `json:"num_regimes"`
+	RegimeMeans []float64 `json:"regime_means,omitempty"`
+	RegimeStds  []float64 `json:"regime_stds,omitempty"`
+}
+
 type AdvancedProfilingResult struct {
-	FrequencyDomain   FrequencyAnalysis   `json:"frequency_domain"`
-	Multimodal        MultimodalAnalysis  `json:"multimodal"`
-	TailDistribution  TailDistribution    `json:"tail_distribution"`
-	VolatilityMetrics VolatilityMetrics   `json:"volatility_metrics"`
-	RegimeDetection   RegimeAnalysis      `json:"regime_detection"`
-	SQLTypeMultimodal []SQLTypeMultimodal `json:"sql_type_multimodal,omitempty"`
+	FrequencyDomain          FrequencyAnalysis          `json:"frequency_domain"`
+	Multimodal               MultimodalAnalysis         `json:"multimodal"`
+	TailDistribution         TailDistribution           `json:"tail_distribution"`
+	VolatilityMetrics        VolatilityMetrics          `json:"volatility_metrics"`
+	RegimeDetection          RegimeAnalysis             `json:"regime_detection"`
+	SQLTypeMultimodal        []SQLTypeMultimodal        `json:"sql_type_multimodal,omitempty"`
+	SQLTypeTailDistribution  []SQLTypeTailDistribution  `json:"sql_type_tail_distribution,omitempty"`
+	SQLTypeVolatilityMetrics []SQLTypeVolatilityMetrics `json:"sql_type_volatility_metrics,omitempty"`
+	SQLTypeRegimeDetection   []SQLTypeRegimeDetection   `json:"sql_type_regime_detection,omitempty"`
 }
 
 type FrequencyAnalysis struct {
@@ -133,6 +164,15 @@ func AnalyzeAdvancedProfileWithSQLTypes(values []TimeSeriesPoint, sqlTypeData ma
 
 	if config.EnableMultimodal && len(sqlTypeData) > 0 {
 		result.SQLTypeMultimodal = analyzeSQLTypeMultimodal(sqlTypeData)
+	}
+
+	if config.EnableTailFit && len(sqlTypeData) > 0 {
+		result.SQLTypeTailDistribution = analyzeSQLTypeTailDistribution(sqlTypeData)
+	}
+
+	if len(sqlTypeData) > 0 {
+		result.SQLTypeVolatilityMetrics = analyzeSQLTypeVolatility(sqlTypeData)
+		result.SQLTypeRegimeDetection = analyzeSQLTypeRegimeDetection(sqlTypeData)
 	}
 
 	return result
@@ -327,6 +367,133 @@ func analyzeSQLTypeMultimodal(sqlTypeData map[string][]TimeSeriesPoint) []SQLTyp
 
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].DipPValue < results[j].DipPValue
+	})
+
+	return results
+}
+
+func analyzeSQLTypeTailDistribution(sqlTypeData map[string][]TimeSeriesPoint) []SQLTypeTailDistribution {
+	var results []SQLTypeTailDistribution
+
+	for sqlType, points := range sqlTypeData {
+		if len(points) < 30 {
+			continue
+		}
+
+		vals := extractValues(points)
+		if len(vals) < 30 {
+			continue
+		}
+
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		if sum == 0 {
+			continue
+		}
+
+		tail := analyzeTailDistribution(vals)
+		analysis := SQLTypeTailDistribution{
+			Type:            sqlType,
+			SampleCount:     len(vals),
+			TailType:        tail.RightTailType,
+			TailIndex:       tail.TailIndex,
+			GPDShape:        tail.GPDShape,
+			GPDScale:        tail.GPDScale,
+			ExtremeValueEst: tail.ExtremeValueEst,
+		}
+
+		results = append(results, analysis)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].TailIndex > results[j].TailIndex
+	})
+
+	return results
+}
+
+func analyzeSQLTypeVolatility(sqlTypeData map[string][]TimeSeriesPoint) []SQLTypeVolatilityMetrics {
+	var results []SQLTypeVolatilityMetrics
+
+	for sqlType, points := range sqlTypeData {
+		if len(points) < 10 {
+			continue
+		}
+
+		vals := extractValues(points)
+		if len(vals) < 10 {
+			continue
+		}
+
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		if sum == 0 {
+			continue
+		}
+
+		vol := analyzeVolatility(vals)
+		analysis := SQLTypeVolatilityMetrics{
+			Type:               sqlType,
+			SampleCount:        len(vals),
+			RealizedVolatility: vol.RealizedVolatility,
+			ParkinsonHL:        vol.ParkinsonHL,
+			VolOfVol:           vol.VolOfVol,
+			VolatilityRatio:    vol.VolatilityRatio,
+			LeverageEffect:     vol.LeverageEffect,
+		}
+
+		results = append(results, analysis)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].RealizedVolatility > results[j].RealizedVolatility
+	})
+
+	return results
+}
+
+func analyzeSQLTypeRegimeDetection(sqlTypeData map[string][]TimeSeriesPoint) []SQLTypeRegimeDetection {
+	var results []SQLTypeRegimeDetection
+
+	for sqlType, points := range sqlTypeData {
+		if len(points) < 20 {
+			continue
+		}
+
+		vals := extractValues(points)
+		if len(vals) < 20 {
+			continue
+		}
+
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		if sum == 0 {
+			continue
+		}
+
+		regime := analyzeRegimes(vals)
+		analysis := SQLTypeRegimeDetection{
+			Type:        sqlType,
+			SampleCount: len(vals),
+			NumRegimes:  regime.NumRegimes,
+		}
+
+		if regime.NumRegimes > 1 && regime.NumRegimes <= 5 {
+			analysis.RegimeMeans = regime.RegimeMeans
+			analysis.RegimeStds = regime.RegimeStds
+		}
+
+		results = append(results, analysis)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].NumRegimes > results[j].NumRegimes
 	})
 
 	return results
@@ -850,6 +1017,29 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 		}
 	}
 
+	if len(result.SQLTypeTailDistribution) > 0 {
+		fmt.Println("\n--- SQL Type Tail Distribution")
+		fmt.Println("  (Analyzes extreme values for each SQL type)")
+		for _, st := range result.SQLTypeTailDistribution {
+			tailTypeStr := st.TailType
+			if tailTypeStr == "" {
+				tailTypeStr = "unknown"
+			}
+			tailTypeDesc := "light"
+			if st.TailIndex > 1.5 {
+				tailTypeDesc = "very heavy"
+			} else if st.TailIndex > 1.0 {
+				tailTypeDesc = "heavy"
+			} else if st.TailIndex > 0.5 {
+				tailTypeDesc = "moderate"
+			}
+			fmt.Printf("  %s: %s (index=%.3f => %s)\n", st.Type, strings.ToUpper(tailTypeStr), st.TailIndex, tailTypeDesc)
+			if st.ExtremeValueEst > 0 {
+				fmt.Printf("    Predicted Extreme (P99.9): %.0f\n", st.ExtremeValueEst)
+			}
+		}
+	}
+
 	fmt.Println("\n--- Volatility Metrics")
 	fmt.Println("  (Measures traffic stability)")
 	vol := result.VolatilityMetrics.RealizedVolatility
@@ -895,6 +1085,28 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 	}
 	fmt.Printf("  Leverage Effect: %.4f [-1 to 1] => %s\n", result.VolatilityMetrics.LeverageEffect, levDesc)
 
+	if len(result.SQLTypeVolatilityMetrics) > 0 {
+		fmt.Println("\n--- SQL Type Volatility Metrics")
+		fmt.Println("  (Measures traffic stability for each SQL type)")
+		for _, sv := range result.SQLTypeVolatilityMetrics {
+			volDesc := "low"
+			if sv.RealizedVolatility > 1.0 {
+				volDesc = "very high"
+			} else if sv.RealizedVolatility > 0.5 {
+				volDesc = "high"
+			} else if sv.RealizedVolatility > 0.2 {
+				volDesc = "moderate"
+			}
+			fmt.Printf("  %s: volatility=%.4f => %s variability", sv.Type, sv.RealizedVolatility, volDesc)
+			if sv.VolatilityRatio > 1.5 {
+				fmt.Printf(", ratio=%.2f (ELEVATED)", sv.VolatilityRatio)
+			} else if sv.VolatilityRatio < 0.7 {
+				fmt.Printf(", ratio=%.2f (LOW)", sv.VolatilityRatio)
+			}
+			fmt.Println()
+		}
+	}
+
 	fmt.Println("\n--- Regime Detection")
 	fmt.Println("  (Identifies distinct operational states)")
 	if result.RegimeDetection.NumRegimes > 1 {
@@ -909,6 +1121,22 @@ func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleI
 	} else {
 		fmt.Println("  Regimes Detected: 1 (stable operational mode)")
 		fmt.Println("  => Traffic follows a consistent pattern without distinct states")
+	}
+
+	if len(result.SQLTypeRegimeDetection) > 0 {
+		fmt.Println("\n--- SQL Type Regime Detection")
+		fmt.Println("  (Identifies distinct operational states for each SQL type)")
+		for _, sr := range result.SQLTypeRegimeDetection {
+			regimeStr := "stable"
+			if sr.NumRegimes > 1 {
+				regimeStr = fmt.Sprintf("%d distinct modes", sr.NumRegimes)
+			}
+			fmt.Printf("  %s: %s", sr.Type, regimeStr)
+			if sr.NumRegimes > 1 && len(sr.RegimeMeans) > 0 && len(sr.RegimeMeans) <= 5 {
+				fmt.Printf(" (means: %v)", formatFloatSlice(sr.RegimeMeans))
+			}
+			fmt.Println()
+		}
 	}
 
 	fmt.Println()

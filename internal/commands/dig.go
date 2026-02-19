@@ -702,7 +702,15 @@ func runDigAnalysisFromRawData(clusterID string, timestamp int64, rawData *analy
 	}
 
 	if len(qpsTimeSeries) >= 64 {
-		advancedProfiling := analysis.AnalyzeAdvancedProfile(qpsTimeSeries, analysis.DefaultAdvancedProfilingConfig())
+		var sqlTypeTS map[string][]analysis.TimeSeriesPoint
+		sqlTypeData := getResults(rawData.SQLTypeData)
+		if len(sqlTypeData) > 0 {
+			sqlTypeRates := calcSQLTypeRates(sqlTypeData)
+			if len(sqlTypeRates) > 0 {
+				sqlTypeTS = convertToTimeSeriesMap(sqlTypeRates)
+			}
+		}
+		advancedProfiling := analysis.AnalyzeAdvancedProfileWithSQLTypes(qpsTimeSeries, sqlTypeTS, analysis.DefaultAdvancedProfilingConfig())
 		if advancedProfiling != nil {
 			analysis.PrintAdvancedProfiling(advancedProfiling)
 		}
