@@ -35,3 +35,7 @@ go.work.sum
 tidbcloud-insight.yaml
 tidbcloud-insight
 cache
+meta/dedicated/clusters.json
+meta/dedicated/clusters.txt
+meta/premium/clusters.json
+meta/premium/clusters.txt
