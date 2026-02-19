@@ -14,6 +14,7 @@ type Config struct {
 	Meta         string          `yaml:"meta"`
 	RateLimit    RateLimitConfig `yaml:"rate_limit"`
 	FetchTimeout string          `yaml:"fetch_timeout"`
+	IdleTimeout  string          `yaml:"idle_timeout"`
 }
 
 type AuthConfig struct {
@@ -77,6 +78,17 @@ func (c *Config) GetFetchTimeout() time.Duration {
 	d, err := time.ParseDuration(c.FetchTimeout)
 	if err != nil {
 		return 5 * time.Minute
+	}
+	return d
+}
+
+func (c *Config) GetIdleTimeout() time.Duration {
+	if c == nil || c.IdleTimeout == "" {
+		return 3 * time.Minute
+	}
+	d, err := time.ParseDuration(c.IdleTimeout)
+	if err != nil {
+		return 3 * time.Minute
 	}
 	return d
 }
