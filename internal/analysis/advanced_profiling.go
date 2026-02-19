@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 type AdvancedProfilingConfig struct {
@@ -35,12 +36,14 @@ type AdvancedProfilingResult struct {
 }
 
 type FrequencyAnalysis struct {
-	DominantPeriods  []PeriodInfo `json:"dominant_periods"`
-	SpectralEntropy  float64      `json:"spectral_entropy"`
-	PeakFrequencies  []float64    `json:"peak_frequencies"`
-	PeriodStrength   float64      `json:"period_strength"`
-	HasDailyPattern  bool         `json:"has_daily_pattern"`
-	HasWeeklyPattern bool         `json:"has_weekly_pattern"`
+	DominantPeriods       []PeriodInfo `json:"dominant_periods"`
+	SpectralEntropy       float64      `json:"spectral_entropy"`
+	PeakFrequencies       []float64    `json:"peak_frequencies"`
+	PeriodStrength        float64      `json:"period_strength"`
+	HasDailyPattern       bool         `json:"has_daily_pattern"`
+	HasWeeklyPattern      bool         `json:"has_weekly_pattern"`
+	HasSemiMonthlyPattern bool         `json:"has_semi_monthly_pattern"`
+	HasMonthlyPattern     bool         `json:"has_monthly_pattern"`
 }
 
 type PeriodInfo struct {
@@ -182,13 +185,23 @@ func analyzeFrequencyDomain(vals []float64) FrequencyAnalysis {
 		}
 	}
 
+	minPatternConfidence := 0.10
 	for _, p := range result.DominantPeriods {
+		if p.Confidence < minPatternConfidence {
+			continue
+		}
 		if p.Period >= 23 && p.Period <= 25 {
 			result.HasDailyPattern = true
 			result.PeriodStrength = math.Max(result.PeriodStrength, p.Confidence)
 		}
 		if p.Period >= 167 && p.Period <= 169 {
 			result.HasWeeklyPattern = true
+		}
+		if p.Period >= 350 && p.Period <= 380 {
+			result.HasSemiMonthlyPattern = true
+		}
+		if p.Period >= 700 && p.Period <= 760 {
+			result.HasMonthlyPattern = true
 		}
 	}
 
@@ -630,6 +643,10 @@ func (p *LoadProfile) EnhanceWithAdvancedAnalysis(qpsData []TimeSeriesPoint) {
 }
 
 func PrintAdvancedProfiling(result *AdvancedProfilingResult) {
+	PrintAdvancedProfilingWithInterval(result, 1.0)
+}
+
+func PrintAdvancedProfilingWithInterval(result *AdvancedProfilingResult, sampleIntervalHours float64) {
 	if result == nil {
 		return
 	}
@@ -638,50 +655,204 @@ func PrintAdvancedProfiling(result *AdvancedProfilingResult) {
 	fmt.Println("ADVANCED PROFILING ANALYSIS")
 	fmt.Println(stringsRepeat("-", 60))
 
-	fmt.Println("\n--- Frequency Domain Analysis ---")
+	fmt.Println("\n--- Frequency Domain Analysis")
+	fmt.Println("  (Detects periodic patterns using FFT spectral analysis)")
 	if len(result.FrequencyDomain.DominantPeriods) > 0 {
+		fmt.Println("  Dominant Periods (sorted by strength):")
+		count := 0
 		for _, p := range result.FrequencyDomain.DominantPeriods {
-			fmt.Printf("  Period: %.1f samples (power=%.3f, confidence=%.2f%%)\n",
-				p.Period, p.Power, p.Confidence*100)
+			if p.Confidence < 0.10 {
+				continue
+			}
+			count++
+			periodHours := p.Period * sampleIntervalHours
+			periodDays := periodHours / 24
+			var timeStr string
+			if periodDays >= 1 {
+				timeStr = fmt.Sprintf("%.1f days", periodDays)
+			} else {
+				timeStr = fmt.Sprintf("%.1f hours", periodHours)
+			}
+			fmt.Printf("    %d. %s | explains %.1f%% of variance\n", count, timeStr, p.Confidence*100)
 		}
-		fmt.Printf("  Spectral Entropy: %.3f\n", result.FrequencyDomain.SpectralEntropy)
-		fmt.Printf("  Daily Pattern: %v\n", result.FrequencyDomain.HasDailyPattern)
-		fmt.Printf("  Weekly Pattern: %v\n", result.FrequencyDomain.HasWeeklyPattern)
+		if count == 0 {
+			fmt.Println("    (no significant periods detected)")
+		}
+		entropyDesc := "moderate regularity"
+		if result.FrequencyDomain.SpectralEntropy < 0.3 {
+			entropyDesc = "highly regular/predictable"
+		} else if result.FrequencyDomain.SpectralEntropy < 0.5 {
+			entropyDesc = "mostly regular"
+		} else if result.FrequencyDomain.SpectralEntropy < 0.7 {
+			entropyDesc = "somewhat random"
+		} else {
+			entropyDesc = "highly random/unpredictable"
+		}
+		fmt.Printf("  Spectral Entropy: %.3f [0-1, lower=more regular] => %s\n", result.FrequencyDomain.SpectralEntropy, entropyDesc)
+
+		fmt.Println("\n  Detected Patterns:")
+		patterns := []struct {
+			name     string
+			detected bool
+		}{
+			{"Daily (24h)", result.FrequencyDomain.HasDailyPattern},
+			{"Weekly (7d)", result.FrequencyDomain.HasWeeklyPattern},
+			{"Semi-Monthly (~15d)", result.FrequencyDomain.HasSemiMonthlyPattern},
+			{"Monthly (~30d)", result.FrequencyDomain.HasMonthlyPattern},
+		}
+		for _, p := range patterns {
+			if p.detected {
+				fmt.Printf("    + %s\n", p.name)
+			}
+		}
+		hasAny := result.FrequencyDomain.HasDailyPattern || result.FrequencyDomain.HasWeeklyPattern ||
+			result.FrequencyDomain.HasSemiMonthlyPattern || result.FrequencyDomain.HasMonthlyPattern
+		if !hasAny {
+			fmt.Println("    (no standard calendar patterns detected)")
+		}
 	}
 
-	fmt.Println("\n--- Multimodal Analysis ---")
-	fmt.Printf("  Is Multimodal: %v\n", result.Multimodal.IsMultimodal)
-	fmt.Printf("  Number of Modes: %d\n", result.Multimodal.NumModes)
-	if len(result.Multimodal.ModeLocations) > 0 {
-		fmt.Printf("  Mode Locations: %v\n", result.Multimodal.ModeLocations)
+	fmt.Println("\n--- Multimodal Analysis")
+	fmt.Println("  (Checks if data has multiple distinct workload levels)")
+	if result.Multimodal.IsMultimodal {
+		fmt.Printf("  Multimodal: YES (%d distinct workload levels detected)\n", result.Multimodal.NumModes)
+		fmt.Println("  => Traffic operates at distinct levels (e.g., day/night, peak/off-peak)")
+	} else {
+		fmt.Printf("  Multimodal: NO (single workload distribution)\n")
+		fmt.Println("  => Traffic follows a single continuous pattern")
 	}
-	fmt.Printf("  Dip Statistic: %.4f (p-value=%.4f)\n",
-		result.Multimodal.DipStatistic, result.Multimodal.DipPValue)
+	if len(result.Multimodal.ModeLocations) > 0 && len(result.Multimodal.ModeLocations) <= 5 {
+		fmt.Printf("  Mode Values (QPS levels): %v\n", formatFloatSlice(result.Multimodal.ModeLocations))
+		if len(result.Multimodal.ModeWeights) > 0 {
+			fmt.Printf("  Mode Weights (time spent): %v\n", formatPercentSlice(result.Multimodal.ModeWeights))
+		}
+	}
+	dipDesc := "likely unimodal"
+	if result.Multimodal.DipPValue < 0.01 {
+		dipDesc = "strongly multimodal"
+	} else if result.Multimodal.DipPValue < 0.05 {
+		dipDesc = "moderately multimodal"
+	}
+	fmt.Printf("  Dip Test p-value: %.4f [0-1, <0.05=multimodal] => %s\n", result.Multimodal.DipPValue, dipDesc)
 
-	fmt.Println("\n--- Tail Distribution ---")
-	fmt.Printf("  Right Tail Type: %s\n", result.TailDistribution.RightTailType)
-	fmt.Printf("  Tail Index: %.3f\n", result.TailDistribution.TailIndex)
+	fmt.Println("\n--- Tail Distribution")
+	fmt.Println("  (Analyzes extreme values and spike behavior)")
+	switch result.TailDistribution.RightTailType {
+	case "heavy":
+		fmt.Println("  Tail Type: HEAVY")
+		fmt.Println("  => Frequent extreme spikes, hard to predict max traffic")
+	case "moderate":
+		fmt.Println("  Tail Type: MODERATE")
+		fmt.Println("  => Occasional spikes, some unpredictability")
+	default:
+		fmt.Println("  Tail Type: LIGHT")
+		fmt.Println("  => Rare extreme values, traffic mostly predictable")
+	}
+	tailDesc := "light tail (bounded extremes)"
+	if result.TailDistribution.TailIndex > 1.5 {
+		tailDesc = "very heavy tail (frequent extremes)"
+	} else if result.TailDistribution.TailIndex > 1.0 {
+		tailDesc = "heavy tail (unbounded variance)"
+	} else if result.TailDistribution.TailIndex > 0.5 {
+		tailDesc = "moderate tail"
+	}
+	fmt.Printf("  Tail Index: %.3f [>1=heavy, <0.5=light] => %s\n", result.TailDistribution.TailIndex, tailDesc)
 	if result.TailDistribution.GPDShape != 0 || result.TailDistribution.GPDScale != 0 {
-		fmt.Printf("  GPD Parameters: shape=%.3f, scale=%.3f\n",
+		fmt.Printf("  GPD Parameters: shape=%.3f [affects tail weight], scale=%.3f\n",
 			result.TailDistribution.GPDShape, result.TailDistribution.GPDScale)
-		fmt.Printf("  Extreme Value Estimate: %.0f\n", result.TailDistribution.ExtremeValueEst)
+		if result.TailDistribution.ExtremeValueEst > 0 {
+			fmt.Printf("  Predicted Extreme (P99.9): %.0f\n", result.TailDistribution.ExtremeValueEst)
+		}
 	}
 
-	fmt.Println("\n--- Volatility Metrics ---")
-	fmt.Printf("  Realized Volatility: %.4f\n", result.VolatilityMetrics.RealizedVolatility)
-	fmt.Printf("  Parkinson HL: %.4f\n", result.VolatilityMetrics.ParkinsonHL)
-	fmt.Printf("  Vol of Vol: %.4f\n", result.VolatilityMetrics.VolOfVol)
-	fmt.Printf("  Volatility Ratio: %.4f\n", result.VolatilityMetrics.VolatilityRatio)
-	fmt.Printf("  Leverage Effect: %.4f\n", result.VolatilityMetrics.LeverageEffect)
+	fmt.Println("\n--- Volatility Metrics")
+	fmt.Println("  (Measures traffic stability)")
+	vol := result.VolatilityMetrics.RealizedVolatility
+	volDesc := "low"
+	if vol > 1.0 {
+		volDesc = "very high"
+	} else if vol > 0.5 {
+		volDesc = "high"
+	} else if vol > 0.2 {
+		volDesc = "moderate"
+	}
+	fmt.Printf("  Realized Volatility: %.4f [higher=more variable] => %s variability\n", vol, volDesc)
 
-	fmt.Println("\n--- Regime Detection ---")
-	fmt.Printf("  Number of Regimes: %d\n", result.RegimeDetection.NumRegimes)
+	parkinsonDesc := "stable"
+	if result.VolatilityMetrics.ParkinsonHL > 0.5 {
+		parkinsonDesc = "unstable"
+	} else if result.VolatilityMetrics.ParkinsonHL > 0.2 {
+		parkinsonDesc = "moderately variable"
+	}
+	fmt.Printf("  Parkinson HL: %.4f [range-based] => %s\n", result.VolatilityMetrics.ParkinsonHL, parkinsonDesc)
+
+	vovDesc := "consistent volatility"
+	if result.VolatilityMetrics.VolOfVol > 1.0 {
+		vovDesc = "highly variable volatility"
+	} else if result.VolatilityMetrics.VolOfVol > 0.5 {
+		vovDesc = "moderately variable volatility"
+	}
+	fmt.Printf("  Vol-of-Vol: %.4f [0-1+, lower=more stable] => %s\n", result.VolatilityMetrics.VolOfVol, vovDesc)
+
+	if result.VolatilityMetrics.VolatilityRatio > 1.5 {
+		fmt.Printf("  Volatility Ratio: %.2f [current vs avg] => ELEVATED (recent instability)\n", result.VolatilityMetrics.VolatilityRatio)
+	} else if result.VolatilityMetrics.VolatilityRatio < 0.7 {
+		fmt.Printf("  Volatility Ratio: %.2f [current vs avg] => LOW (recently calmer)\n", result.VolatilityMetrics.VolatilityRatio)
+	} else {
+		fmt.Printf("  Volatility Ratio: %.2f [current vs avg] => NORMAL\n", result.VolatilityMetrics.VolatilityRatio)
+	}
+
+	levDesc := "no significant effect"
+	if result.VolatilityMetrics.LeverageEffect < -0.3 {
+		levDesc = "volatility spikes when load drops (unusual)"
+	} else if result.VolatilityMetrics.LeverageEffect > 0.3 {
+		levDesc = "volatility spikes with load (typical)"
+	}
+	fmt.Printf("  Leverage Effect: %.4f [-1 to 1] => %s\n", result.VolatilityMetrics.LeverageEffect, levDesc)
+
+	fmt.Println("\n--- Regime Detection")
+	fmt.Println("  (Identifies distinct operational states)")
 	if result.RegimeDetection.NumRegimes > 1 {
-		fmt.Printf("  Regime Means: %v\n", result.RegimeDetection.RegimeMeans)
-		fmt.Printf("  Regime Stds: %v\n", result.RegimeDetection.RegimeStds)
-		fmt.Printf("  Regime Durations: %v\n", result.RegimeDetection.RegimeDurations)
+		fmt.Printf("  Regimes Detected: %d distinct operational modes\n", result.RegimeDetection.NumRegimes)
+		fmt.Println("  => System operates at different levels (e.g., peak vs off-peak)")
+		for i := 0; i < result.RegimeDetection.NumRegimes && i < 5; i++ {
+			durationH := float64(result.RegimeDetection.RegimeDurations[i]) * sampleIntervalHours
+			fmt.Printf("    Regime %d: mean=%.0f, std=%.0f, duration=%.1fh\n",
+				i, result.RegimeDetection.RegimeMeans[i], result.RegimeDetection.RegimeStds[i], durationH)
+		}
 		fmt.Printf("  Current Regime: %d\n", result.RegimeDetection.CurrentRegime)
+	} else {
+		fmt.Println("  Regimes Detected: 1 (stable operational mode)")
+		fmt.Println("  => Traffic follows a consistent pattern without distinct states")
 	}
 
 	fmt.Println()
+}
+
+func formatFloatSlice(vals []float64) string {
+	if len(vals) == 0 {
+		return "[]"
+	}
+	if len(vals) <= 4 {
+		formatted := make([]string, len(vals))
+		for i, v := range vals {
+			formatted[i] = fmt.Sprintf("%.0f", v)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(formatted, ", "))
+	}
+	return fmt.Sprintf("[%.0f, %.0f, ... %d more]", vals[0], vals[1], len(vals)-2)
+}
+
+func formatPercentSlice(vals []float64) string {
+	if len(vals) == 0 {
+		return "[]"
+	}
+	if len(vals) <= 4 {
+		formatted := make([]string, len(vals))
+		for i, v := range vals {
+			formatted[i] = fmt.Sprintf("%.0f%%", v*100)
+		}
+		return fmt.Sprintf("[%s]", strings.Join(formatted, ", "))
+	}
+	return fmt.Sprintf("[%.0f%%, %.0f%%, ...]", vals[0]*100, vals[1]*100)
 }
