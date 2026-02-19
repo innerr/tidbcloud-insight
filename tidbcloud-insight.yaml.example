@@ -1,0 +1,15 @@
+auth:
+  client_id: "your-o11y-client-id"
+  client_secret: "your-o11y-client-secret"
+  token_url: "https://tidb-soc2.us.auth0.com/oauth/token"
+  audience: "https://tidb-soc2.us.auth0.com/api/v2/"
+
+cache: "./cache"
+
+meta: "./meta"
+
+rate_limit:
+  max_backoff: "5m"
+  desired_concurrency: 3
+  recovery_interval: "30s"
+  min_recovery_interval: "10s"

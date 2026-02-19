@@ -30,3 +30,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# bin & cache & config
+tidbcloud-insight.yaml
+tidbcloud-insight
+cache
