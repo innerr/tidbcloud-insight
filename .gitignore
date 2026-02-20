@@ -33,7 +33,7 @@ go.work.sum
 
 # bin & cache & config
 tidbcloud-insight.yaml
-tidbcloud-insight
+/tidbcloud-insight
 cache
 meta/dedicated/clusters.json
 meta/dedicated/clusters.txt
