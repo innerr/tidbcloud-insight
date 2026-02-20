@@ -484,6 +484,11 @@ func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([
 	}
 }
 
+type MetricWriter interface {
+	WriteSeries(labels map[string]string, timestamps []int64, values []float64) error
+	Close() error
+}
+
 type ChunkedMetricResult struct {
 	Result   map[string]interface{}
 	DataSize int
@@ -491,6 +496,10 @@ type ChunkedMetricResult struct {
 }
 
 func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
+	return c.QueryMetricChunkedWithWriter(ctx, dsURL, metric, start, end, step, chunkSize, nil)
+}
+
+func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int, writer MetricWriter) (*ChunkedMetricResult, error) {
 	if chunkSize <= 0 {
 		chunkSize = 1800
 	}
@@ -514,6 +523,11 @@ func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, s
 		result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, start, end, step)
 		if err != nil {
 			return nil, err
+		}
+		if writer != nil {
+			if err := writeResultToWriter(result, writer); err != nil {
+				return nil, err
+			}
 		}
 		dataSize := estimateDataSize(result)
 		byteSize := estimateByteSize(result)
@@ -567,31 +581,48 @@ func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, s
 	progressTicker := time.NewTicker(30 * time.Second)
 	defer progressTicker.Stop()
 
+	var merged map[string]interface{}
+	var totalDataSize int
+	var totalByteSize int64
+
 	for {
 		select {
 		case r, ok := <-resultChan:
 			if !ok {
-				var validResults []map[string]interface{}
-				for _, res := range allResults {
-					if res != nil {
-						validResults = append(validResults, res)
-					}
+				if writer != nil {
+					_ = writer.Close()
 				}
-
-				if len(validResults) == 0 {
+				if received == 0 {
 					return nil, fmt.Errorf("all chunks failed for metric %s", metric)
 				}
-
-				merged := mergeChunkedResults(validResults)
-				dataSize := estimateDataSize(merged)
-				byteSize := estimateByteSize(merged)
-				return &ChunkedMetricResult{Result: merged, DataSize: dataSize, ByteSize: byteSize}, nil
+				if writer == nil {
+					var validResults []map[string]interface{}
+					for _, res := range allResults {
+						if res != nil {
+							validResults = append(validResults, res)
+						}
+					}
+					merged = mergeChunkedResults(validResults)
+				}
+				if merged != nil {
+					totalDataSize = estimateDataSize(merged)
+					totalByteSize = estimateByteSize(merged)
+				}
+				return &ChunkedMetricResult{Result: merged, DataSize: totalDataSize, ByteSize: totalByteSize}, nil
 			}
 
 			if r.err != nil {
 				failed++
 			} else if r.result != nil {
-				allResults[r.idx] = r.result
+				if writer != nil {
+					if err := writeResultToWriter(r.result, writer); err != nil {
+						return nil, err
+					}
+					totalDataSize += estimateDataSize(r.result)
+					totalByteSize += estimateByteSize(r.result)
+				} else {
+					allResults[r.idx] = r.result
+				}
 				received++
 			}
 
@@ -602,9 +633,67 @@ func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, s
 			}
 
 		case <-ctx.Done():
+			if writer != nil {
+				_ = writer.Close()
+			}
 			return nil, ctx.Err()
 		}
 	}
+}
+
+func writeResultToWriter(result map[string]interface{}, writer MetricWriter) error {
+	if result == nil {
+		return nil
+	}
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	results, ok := data["result"].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, r := range results {
+		series, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		labels := make(map[string]string)
+		if metric, ok := series["metric"].(map[string]interface{}); ok {
+			for k, v := range metric {
+				if s, ok := v.(string); ok {
+					labels[k] = s
+				}
+			}
+		}
+		values, ok := series["values"].([]interface{})
+		if !ok {
+			continue
+		}
+		var timestamps []int64
+		var vals []float64
+		for _, v := range values {
+			arr, ok := v.([]interface{})
+			if !ok || len(arr) < 2 {
+				continue
+			}
+			ts, ok1 := arr[0].(float64)
+			val, ok2 := arr[1].(string)
+			if !ok1 || !ok2 {
+				continue
+			}
+			timestamps = append(timestamps, int64(ts))
+			var f float64
+			_, _ = fmt.Sscanf(val, "%f", &f)
+			vals = append(vals, f)
+		}
+		if len(timestamps) > 0 {
+			if err := writer.WriteSeries(labels, timestamps, vals); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func estimateDataSize(result map[string]interface{}) int {
