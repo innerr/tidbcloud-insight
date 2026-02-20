@@ -274,51 +274,11 @@ func (s *DigStorage) LoadRawData(clusterID string, timestamp int64) (*DigRawData
 		return nil, fmt.Errorf("failed to unmarshal meta data: %w", err)
 	}
 
-	qpsFile := filepath.Join(rawDir, "qps.json")
-	if qpsData, err := os.ReadFile(qpsFile); err == nil {
-		var qpsPoints []map[string]interface{}
-		if json.Unmarshal(qpsData, &qpsPoints) == nil {
-			raw.QPSData = make([]TimeSeriesPoint, len(qpsPoints))
-			for i, p := range qpsPoints {
-				raw.QPSData[i] = TimeSeriesPoint{
-					Timestamp: int64(p["timestamp"].(float64)),
-					Value:     p["value"].(float64),
-				}
-			}
-		}
-	}
-
-	latencyFile := filepath.Join(rawDir, "latency.json")
-	if latencyData, err := os.ReadFile(latencyFile); err == nil {
-		var latencyPoints []TimeSeriesPoint
-		if json.Unmarshal(latencyData, &latencyPoints) == nil {
-			raw.LatencyData = latencyPoints
-		}
-	}
-
-	sqlTypeFile := filepath.Join(rawDir, "sql_type.json")
-	if data, err := os.ReadFile(sqlTypeFile); err == nil {
-		var sqlTypeData map[string]interface{}
-		if json.Unmarshal(data, &sqlTypeData) == nil {
-			raw.SQLTypeData = sqlTypeData
-		}
-	}
-
-	tikvOpFile := filepath.Join(rawDir, "tikv_op.json")
-	if data, err := os.ReadFile(tikvOpFile); err == nil {
-		var tikvOpData map[string]interface{}
-		if json.Unmarshal(data, &tikvOpData) == nil {
-			raw.TiKVOpData = tikvOpData
-		}
-	}
-
-	tikvLatencyFile := filepath.Join(rawDir, "tikv_latency.json")
-	if data, err := os.ReadFile(tikvLatencyFile); err == nil {
-		var tikvLatencyData map[string]interface{}
-		if json.Unmarshal(data, &tikvLatencyData) == nil {
-			raw.TiKVLatencyData = tikvLatencyData
-		}
-	}
+	raw.QPSData = s.loadSimpleMetric(rawDir, "qps")
+	raw.LatencyData = s.loadSimpleMetric(rawDir, "latency")
+	raw.SQLTypeData = s.loadPrometheusMetric(rawDir, "sql_type")
+	raw.TiKVOpData = s.loadPrometheusMetric(rawDir, "tikv_op")
+	raw.TiKVLatencyData = s.loadPrometheusMetric(rawDir, "tikv_latency")
 
 	topologyFile := filepath.Join(rawDir, "topology.json")
 	if data, err := os.ReadFile(topologyFile); err == nil {
@@ -329,6 +289,112 @@ func (s *DigStorage) LoadRawData(clusterID string, timestamp int64) (*DigRawData
 	}
 
 	return &raw, nil
+}
+
+func (s *DigStorage) loadSimpleMetric(rawDir, name string) []TimeSeriesPoint {
+	csvFile := filepath.Join(rawDir, name+".csv")
+	if _, err := os.Stat(csvFile); err == nil {
+		labelsFile := filepath.Join(rawDir, name+".csv.labels")
+		data, err := ReadCSVMetricFile(csvFile, labelsFile)
+		if err != nil {
+			return nil
+		}
+		return extractSimplePoints(data)
+	}
+
+	jsonFile := filepath.Join(rawDir, name+".json")
+	if data, err := os.ReadFile(jsonFile); err == nil {
+		var points []map[string]interface{}
+		if json.Unmarshal(data, &points) == nil {
+			result := make([]TimeSeriesPoint, len(points))
+			for i, p := range points {
+				result[i] = TimeSeriesPoint{
+					Timestamp: int64(p["timestamp"].(float64)),
+					Value:     p["value"].(float64),
+				}
+			}
+			return result
+		}
+
+		var capitalPoints []struct {
+			Timestamp int64   `json:"Timestamp"`
+			Value     float64 `json:"Value"`
+		}
+		if json.Unmarshal(data, &capitalPoints) == nil {
+			result := make([]TimeSeriesPoint, len(capitalPoints))
+			for i, p := range capitalPoints {
+				result[i] = TimeSeriesPoint{
+					Timestamp: p.Timestamp,
+					Value:     p.Value,
+				}
+			}
+			return result
+		}
+	}
+
+	return nil
+}
+
+func extractSimplePoints(data map[string]interface{}) []TimeSeriesPoint {
+	if data == nil {
+		return nil
+	}
+	dataMap, ok := data["data"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	results, ok := dataMap["result"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	for _, r := range results {
+		series, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		values, ok := series["values"].([]interface{})
+		if !ok {
+			continue
+		}
+		points := make([]TimeSeriesPoint, len(values))
+		for i, v := range values {
+			arr, ok := v.([]interface{})
+			if !ok || len(arr) < 2 {
+				continue
+			}
+			ts, _ := arr[0].(float64)
+			valStr, _ := arr[1].(string)
+			val, _ := strconv.ParseFloat(valStr, 64)
+			points[i] = TimeSeriesPoint{
+				Timestamp: int64(ts),
+				Value:     val,
+			}
+		}
+		return points
+	}
+	return nil
+}
+
+func (s *DigStorage) loadPrometheusMetric(rawDir, name string) map[string]interface{} {
+	csvFile := filepath.Join(rawDir, name+".csv")
+	if _, err := os.Stat(csvFile); err == nil {
+		labelsFile := filepath.Join(rawDir, name+".csv.labels")
+		data, err := ReadCSVMetricFile(csvFile, labelsFile)
+		if err == nil {
+			return data
+		}
+	}
+
+	jsonFile := filepath.Join(rawDir, name+".json")
+	if data, err := os.ReadFile(jsonFile); err == nil {
+		var result map[string]interface{}
+		if json.Unmarshal(data, &result) == nil {
+			return result
+		}
+	}
+
+	return nil
 }
 
 func (s *DigStorage) ListClusterAnalyses(clusterID string) (*DigIndex, error) {
