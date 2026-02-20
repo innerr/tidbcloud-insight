@@ -20,6 +20,14 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Debug Go env
+        run: |
+          go env
+          echo "---"
+          go env GOMOD
+          echo "---"
+          go list -m all
+
       - name: Tidy dependencies
         run: go mod tidy
 
