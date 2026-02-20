@@ -111,6 +111,44 @@ func (c *Cache) GetCachedMetrics(cacheKey string) (map[string]map[string]interfa
 	return result, nil
 }
 
+func (c *Cache) StreamCachedMetrics(cacheKey string, onMetric func(metricName string, data map[string]interface{}) error) error {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	cacheID, exists := c.index.Queries[cacheKey]
+	if !exists {
+		return nil
+	}
+
+	cacheDir := filepath.Join(c.queryDir, cacheID)
+	info, err := os.Stat(cacheDir)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+
+	files, err := filepath.Glob(filepath.Join(cacheDir, "*.json"))
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		metricName := strings.TrimSuffix(filepath.Base(f), ".json")
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var metricData map[string]interface{}
+		if err := json.Unmarshal(data, &metricData); err != nil {
+			continue
+		}
+		if err := onMetric(metricName, metricData); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (c *Cache) SaveMetricsCache(cacheKey string, metricsData map[string]map[string]interface{}) (string, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
