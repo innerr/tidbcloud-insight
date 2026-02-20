@@ -402,7 +402,7 @@ func RunComprehensiveAnalysis(cacheID, cacheBaseDir string) (*AnalysisResult, er
 		}
 	}
 
-	fmt.Println("\n--- TiDB Node Summary ---\n")
+	fmt.Println("\n--- TiDB Node Summary ---")
 	fmt.Printf("%-15s %-10s %-10s %-10s %-10s %-10s %-10s\n",
 		"Instance", "Avg CPU", "Max CPU", "Avg QPS", "Max QPS", "P50(ms)", "P99(ms)")
 	fmt.Println(strings.Repeat("-", 85))
@@ -492,7 +492,7 @@ func RunComprehensiveAnalysis(cacheID, cacheBaseDir string) (*AnalysisResult, er
 		result.TotalMaxCPU += s.MaxCPU
 	}
 
-	fmt.Println("\n--- QPS-Latency Correlation ---\n")
+	fmt.Println("\n--- QPS-Latency Correlation ---")
 
 	var corrResults []CorrelationResult
 	var sortedInstances2 []string
