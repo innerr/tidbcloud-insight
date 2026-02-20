@@ -13,10 +13,31 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var cfgFile string
-var verbose bool
+var (
+	cfgFile string
+	verbose bool
+
+	GitHash   string
+	GitDirty  string
+	DirtyHash string
+	BuildTime string
+)
+
+func printVersion() {
+	if GitDirty != "" {
+		if DirtyHash != "" {
+			fmt.Fprintf(os.Stderr, "[Build] git: %s-dirty dirty-hash: %s time: %s\n", GitHash, DirtyHash, BuildTime)
+		} else {
+			fmt.Fprintf(os.Stderr, "[Build] git: %s-dirty time: %s\n", GitHash, BuildTime)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "[Build] git: %s time: %s\n", GitHash, BuildTime)
+	}
+}
 
 func main() {
+	printVersion()
+
 	rootCmd := &cobra.Command{
 		Use:   "tidbcloud-insight",
 		Short: "TiDB Cloud Insight Tool",

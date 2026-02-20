@@ -1,7 +1,17 @@
 APP_NAME := tidbcloud-insight
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+GIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_DIRTY := $(shell git diff --quiet 2>/dev/null || echo "dirty")
+DIRTY_HASH := $(shell git diff --stat 2>/dev/null | git hash-object --stdin 2>/dev/null | cut -c1-8 || echo "")
+
+VERSION := $(GIT_HASH)$(if $(GIT_DIRTY),-dirty)
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
+
+LDFLAGS := -ldflags "-s -w \
+	-X main.GitHash=$(GIT_HASH) \
+	-X main.GitDirty=$(GIT_DIRTY) \
+	-X main.DirtyHash=$(DIRTY_HASH) \
+	-X main.BuildTime=$(BUILD_TIME)"
 
 .PHONY: all build clean test lint fmt vet install run
 
