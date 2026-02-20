@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"tidbcloud-insight/internal/cache"
+	"tidbcloud-insight/internal/local_cache"
 
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ func NewCacheCmd(c *cache.Cache) *cobra.Command {
 		Short: "Manage metric cache",
 		Run: func(cmd *cobra.Command, args []string) {
 			if list {
-				fmt.Println("Cached queries:\n")
+				fmt.Println("Cached queries:")
 				index := c.GetIndex()
 
 				type cacheEntry struct {

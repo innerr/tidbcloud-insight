@@ -16,9 +16,10 @@ import (
 
 	"tidbcloud-insight/internal/analysis"
 	"tidbcloud-insight/internal/auth"
-	"tidbcloud-insight/internal/cache"
 	"tidbcloud-insight/internal/client"
 	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/local_cache"
+	"tidbcloud-insight/internal/logger"
 
 	"github.com/spf13/cobra"
 )
@@ -1133,13 +1134,9 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 		case <-progressTicker.C:
 			mu.Lock()
 			pending := total - completed
-			concurrencyInfo := ""
-			if cc := cl.GetConcurrencyController(); cc != nil {
-				concurrencyInfo = fmt.Sprintf(", concurrency: %d", cc.GetCurrentConcurrency())
-			}
 			bytesInfo := formatBytes(cl.GetBytesReceived())
 			if pending > 0 {
-				fmt.Printf("  [INFO] Still fetching metrics%s, %d/%d completed, %s received...\n", concurrencyInfo, completed, total, bytesInfo)
+				logger.Infof("Still fetching metrics, %d/%d completed, %s received...", completed, total, bytesInfo)
 			}
 			mu.Unlock()
 		}
