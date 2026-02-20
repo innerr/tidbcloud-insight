@@ -88,7 +88,7 @@ func (l *Logger) log(level string, levelVal LogLevel, msg string) {
 	current, desired := l.getConcurrency()
 	gid := getGoroutineID()
 	ts := formatTimestamp()
-	log.Printf("[%s] %s concurrency: %d/%d goroutine: %d %s", level, ts, current, desired, gid, msg)
+	log.Printf("[%s] %s concurrency: %d/%d goroutine: #%d %s", level, ts, current, desired, gid, msg)
 }
 
 func (l *Logger) Debug(msg string) {
