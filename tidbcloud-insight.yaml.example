@@ -12,6 +12,11 @@ fetch_timeout: "5m"
 
 idle_timeout: "3m"
 
+# Target chunk size in bytes for each metric request
+# The program will adjust the time range per request to aim for this size
+# Default: 1048576 (1MB)
+target_chunk_size: 1048576
+
 rate_limit:
   max_backoff: "5m"
   desired_concurrency: 3

@@ -483,6 +483,7 @@ func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([
 type ChunkedMetricResult struct {
 	Result   map[string]interface{}
 	DataSize int
+	ByteSize int64
 }
 
 func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
@@ -511,7 +512,8 @@ func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, s
 			return nil, err
 		}
 		dataSize := estimateDataSize(result)
-		return &ChunkedMetricResult{Result: result, DataSize: dataSize}, nil
+		byteSize := estimateByteSize(result)
+		return &ChunkedMetricResult{Result: result, DataSize: dataSize, ByteSize: byteSize}, nil
 	}
 
 	var mu sync.Mutex
@@ -564,7 +566,8 @@ func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, s
 
 	merged := mergeChunkedResults(validResults)
 	dataSize := estimateDataSize(merged)
-	return &ChunkedMetricResult{Result: merged, DataSize: dataSize}, nil
+	byteSize := estimateByteSize(merged)
+	return &ChunkedMetricResult{Result: merged, DataSize: dataSize, ByteSize: byteSize}, nil
 }
 
 func estimateDataSize(result map[string]interface{}) int {
@@ -591,6 +594,17 @@ func estimateDataSize(result map[string]interface{}) int {
 		}
 	}
 	return totalPoints
+}
+
+func estimateByteSize(result map[string]interface{}) int64 {
+	if result == nil {
+		return 0
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return 0
+	}
+	return int64(len(data))
 }
 
 func (c *Client) QueryMetricWithRetry(ctx context.Context, dsURL, metric string, start, end, initialStep int) (map[string]interface{}, int, error) {

@@ -9,13 +9,14 @@ import (
 )
 
 type Config struct {
-	Auth         AuthConfig      `yaml:"auth"`
-	Cache        string          `yaml:"cache"`
-	Meta         string          `yaml:"meta"`
-	RateLimit    RateLimitConfig `yaml:"rate_limit"`
-	FetchTimeout string          `yaml:"fetch_timeout"`
-	IdleTimeout  string          `yaml:"idle_timeout"`
-	Logging      LoggingConfig   `yaml:"logging"`
+	Auth            AuthConfig      `yaml:"auth"`
+	Cache           string          `yaml:"cache"`
+	Meta            string          `yaml:"meta"`
+	RateLimit       RateLimitConfig `yaml:"rate_limit"`
+	FetchTimeout    string          `yaml:"fetch_timeout"`
+	IdleTimeout     string          `yaml:"idle_timeout"`
+	TargetChunkSize int             `yaml:"target_chunk_size"`
+	Logging         LoggingConfig   `yaml:"logging"`
 }
 
 type AuthConfig struct {
@@ -97,6 +98,13 @@ func (c *Config) GetIdleTimeout() time.Duration {
 		return 3 * time.Minute
 	}
 	return d
+}
+
+func (c *Config) GetTargetChunkSize() int {
+	if c == nil || c.TargetChunkSize <= 0 {
+		return 1 * 1024 * 1024
+	}
+	return c.TargetChunkSize
 }
 
 var cfg *Config

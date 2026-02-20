@@ -1014,6 +1014,7 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 		name     string
 		result   map[string]interface{}
 		dataSize int
+		byteSize int64
 		err      error
 	}
 	results := make(chan metricResult, 5)
@@ -1036,33 +1037,48 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 		sem = make(chan struct{}, 3)
 	}
 
+	totalDuration := endTS - startTS
+	cfg := config.Get()
+	targetChunkSize := int64(1 * 1024 * 1024)
+	if cfg != nil {
+		targetChunkSize = int64(cfg.GetTargetChunkSize())
+	}
+
 	initialChunkSize := 30 * 60
 	adaptiveChunkSize := initialChunkSize
-	totalDuration := endTS - startTS
 
 	completed := 0
 	total := len(metrics)
 
 	chunkInfo := make(map[string]int)
 
-	for _, m := range metrics {
+	for i, m := range metrics {
 		wg.Add(1)
-		go func(name, metric string, chunkSize int) {
+		go func(idx int, name, metric string) {
 			defer wg.Done()
 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			chunkSize := adaptiveChunkSize
+			if idx > 0 {
+				mu.Lock()
+				chunkSize = adaptiveChunkSize
+				mu.Unlock()
+			}
+
 			result, err := cl.QueryMetricChunked(ctx, dsURL, metric, startTS, endTS, step, chunkSize)
 
 			var res map[string]interface{}
 			var dataSize int
+			var byteSize int64
 			if err == nil && result != nil {
 				res = result.Result
 				dataSize = result.DataSize
+				byteSize = result.ByteSize
 			}
 
-			results <- metricResult{name: name, result: res, dataSize: dataSize, err: err}
+			results <- metricResult{name: name, result: res, dataSize: dataSize, byteSize: byteSize, err: err}
 
 			{
 				mu.Lock()
@@ -1070,11 +1086,11 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 				if err != nil {
 					fmt.Printf("  * (%d/%d) %s: FAILED (%v)\n", completed, total, name, err)
 				} else {
-					fmt.Printf("  * (%d/%d) %s: OK (%d points)\n", completed, total, name, dataSize)
+					fmt.Printf("  * (%d/%d) %s: OK (%d points, %s)\n", completed, total, name, dataSize, formatBytes(byteSize))
 				}
 				mu.Unlock()
 			}
-		}(m.name, m.metric, adaptiveChunkSize)
+		}(i, m.name, m.metric)
 	}
 
 	go func() {
@@ -1106,27 +1122,27 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 				tikvLatencyResult = r.result
 			}
 
-			if firstResult && r.dataSize > 0 {
+			if firstResult && r.byteSize > 0 {
 				firstResult = false
-				chunksForDuration := float64(totalDuration) / float64(initialChunkSize)
-				expectedPointsPerChunk := float64(r.dataSize) / chunksForDuration
 
-				if expectedPointsPerChunk > 5000000 {
-					adaptiveChunkSize = 15 * 60
-				} else if expectedPointsPerChunk > 2000000 {
-					adaptiveChunkSize = 20 * 60
-				} else if expectedPointsPerChunk < 100000 && totalDuration > 7*24*3600 {
-					adaptiveChunkSize = 3 * 24 * 3600
-				} else if expectedPointsPerChunk < 200000 && totalDuration > 3*24*3600 {
-					adaptiveChunkSize = 24 * 3600
-				} else if expectedPointsPerChunk < 500000 && totalDuration > 24*3600 {
-					adaptiveChunkSize = 6 * 3600
-				} else if expectedPointsPerChunk < 1000000 && totalDuration > 6*3600 {
-					adaptiveChunkSize = 2 * 3600
-				}
+				bytesPerSecond := float64(r.byteSize) / float64(totalDuration)
+				if bytesPerSecond > 0 {
+					optimalChunkSize := int(float64(targetChunkSize) / bytesPerSecond)
 
-				if adaptiveChunkSize != initialChunkSize {
-					chunkInfo["adjusted"] = adaptiveChunkSize
+					minChunkSize := 5 * 60
+					maxChunkSize := 24 * 3600
+					if optimalChunkSize < minChunkSize {
+						optimalChunkSize = minChunkSize
+					} else if optimalChunkSize > maxChunkSize {
+						optimalChunkSize = maxChunkSize
+					}
+
+					adaptiveChunkSize = optimalChunkSize
+
+					if adaptiveChunkSize != initialChunkSize {
+						chunkInfo["adjusted"] = adaptiveChunkSize
+						logger.Infof("Adjusted chunk size to %s for target %s/request", formatDuration(time.Duration(adaptiveChunkSize)*time.Second), formatBytes(targetChunkSize))
+					}
 				}
 			}
 
