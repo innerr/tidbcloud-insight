@@ -13,6 +13,8 @@ import (
 
 	"tidbcloud-insight/internal/auth"
 	"tidbcloud-insight/internal/cache"
+	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/logger"
 )
 
 const GSEndpoint = "http://www.gs.us-west-2.aws.observability.tidbcloud.com/api/v1/clusters/"
@@ -71,7 +73,6 @@ func NewClientWithTimeout(c *cache.Cache, timeout time.Duration, idleTimeout tim
 		ConsecutiveFailThreshold: 3,
 		BackoffInitial:           1 * time.Second,
 		BackoffMax:               30 * time.Second,
-		Verbose:                  true,
 		ProgressInterval:         10 * time.Second,
 		GetConcurrencyFunc: func() int {
 			return acc.GetCurrentConcurrency()
@@ -393,6 +394,13 @@ func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, e
 	}
 	defer resp.Body.Close()
 
+	logAll := false
+	if cfg := config.Get(); cfg != nil {
+		logAll = cfg.Logging.LogAllHTTPCodes
+	}
+	logger.SetConcurrencyProvider(c.concurrency)
+	logger.LogHTTP(metric, resp.StatusCode, logAll)
+
 	data, err := c.readBodyWithIdleTimeout(ctx, resp.Body)
 	if err != nil {
 		return nil, err
@@ -464,6 +472,119 @@ func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([
 			idleTimer.Reset(c.idleTimeout)
 		}
 	}
+}
+
+type ChunkedMetricResult struct {
+	Result   map[string]interface{}
+	DataSize int
+}
+
+func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
+	if chunkSize <= 0 {
+		chunkSize = 1800
+	}
+
+	var chunks [][2]int
+	chunkStart := start
+	for chunkStart < end {
+		chunkEnd := chunkStart + chunkSize
+		if chunkEnd > end {
+			chunkEnd = end
+		}
+		chunks = append(chunks, [2]int{chunkStart, chunkEnd})
+		chunkStart = chunkEnd
+	}
+
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("no time range to query")
+	}
+
+	if len(chunks) == 1 {
+		result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, start, end, step)
+		if err != nil {
+			return nil, err
+		}
+		dataSize := estimateDataSize(result)
+		return &ChunkedMetricResult{Result: result, DataSize: dataSize}, nil
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	chunkResults := make([]map[string]interface{}, len(chunks))
+	errors := make([]error, len(chunks))
+
+	maxConcurrency := 3
+	if c.concurrency != nil {
+		maxConcurrency = c.concurrency.GetCurrentConcurrency()
+	}
+	sem := make(chan struct{}, maxConcurrency)
+
+	for i, chunk := range chunks {
+		wg.Add(1)
+		go func(idx int, chunkStart, chunkEnd int) {
+			defer wg.Done()
+
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				mu.Lock()
+				errors[idx] = ctx.Err()
+				mu.Unlock()
+				return
+			}
+
+			result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, chunkStart, chunkEnd, step)
+
+			mu.Lock()
+			chunkResults[idx] = result
+			errors[idx] = err
+			mu.Unlock()
+		}(i, chunk[0], chunk[1])
+	}
+
+	wg.Wait()
+
+	var validResults []map[string]interface{}
+	for i, result := range chunkResults {
+		if errors[i] == nil && result != nil {
+			validResults = append(validResults, result)
+		}
+	}
+
+	if len(validResults) == 0 {
+		return nil, fmt.Errorf("all chunks failed for metric %s", metric)
+	}
+
+	merged := mergeChunkedResults(validResults)
+	dataSize := estimateDataSize(merged)
+	return &ChunkedMetricResult{Result: merged, DataSize: dataSize}, nil
+}
+
+func estimateDataSize(result map[string]interface{}) int {
+	if result == nil {
+		return 0
+	}
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	results, ok := data["result"].([]interface{})
+	if !ok {
+		return 0
+	}
+	totalPoints := 0
+	for _, r := range results {
+		series, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		values, ok := series["values"].([]interface{})
+		if ok {
+			totalPoints += len(values)
+		}
+	}
+	return totalPoints
 }
 
 func (c *Client) QueryMetricWithRetry(ctx context.Context, dsURL, metric string, start, end, initialStep int) (map[string]interface{}, int, error) {

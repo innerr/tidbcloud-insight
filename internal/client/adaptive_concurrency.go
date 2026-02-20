@@ -2,11 +2,11 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/logger"
 )
 
 type ConcurrencyState int
@@ -180,7 +180,8 @@ func (acc *AdaptiveConcurrencyController) Submit(task func()) bool {
 		return true
 	default:
 		if acc.config.Verbose {
-			fmt.Println("[WARN] Task queue full, task rejected")
+			logger.SetConcurrencyProvider(acc)
+			logger.Warn("Task queue full, task rejected")
 		}
 		return false
 	}
@@ -247,7 +248,8 @@ func (acc *AdaptiveConcurrencyController) reduceConcurrency() {
 		acc.state = StateMinimal
 		acc.stateChangedAt = time.Now()
 		if acc.config.Verbose {
-			fmt.Printf("[INFO] Concurrency at minimum (%d), entering minimal state\n", acc.currentConcurrency)
+			logger.SetConcurrencyProvider(acc)
+			logger.Infof("Concurrency at minimum (%d), entering minimal state", acc.currentConcurrency)
 		}
 		return
 	}
@@ -264,7 +266,8 @@ func (acc *AdaptiveConcurrencyController) reduceConcurrency() {
 	acc.currentRecoveryInterval = acc.config.RecoveryInterval
 
 	if acc.config.Verbose {
-		fmt.Printf("[INFO] Reduced concurrency to %d\n", acc.currentConcurrency)
+		logger.SetConcurrencyProvider(acc)
+		logger.Infof("Reduced concurrency to %d", acc.currentConcurrency)
 	}
 }
 
@@ -275,7 +278,8 @@ func (acc *AdaptiveConcurrencyController) tryRecover() {
 		acc.currentRecoveryInterval = acc.config.RecoveryInterval
 		acc.recoveryAttempts = 0
 		if acc.config.Verbose {
-			fmt.Printf("[INFO] Recovered to normal state, concurrency: %d\n", acc.currentConcurrency)
+			logger.SetConcurrencyProvider(acc)
+			logger.Infof("Recovered to normal state, concurrency: %d", acc.currentConcurrency)
 		}
 		return
 	}
@@ -301,7 +305,8 @@ func (acc *AdaptiveConcurrencyController) tryRecover() {
 	)
 
 	if acc.config.Verbose {
-		fmt.Printf("[INFO] Recovering concurrency to %d (attempt %d, next interval: %v)\n",
+		logger.SetConcurrencyProvider(acc)
+		logger.Infof("Recovering concurrency to %d (attempt %d, next interval: %v)",
 			acc.currentConcurrency, acc.recoveryAttempts, acc.currentRecoveryInterval)
 	}
 }
@@ -310,6 +315,10 @@ func (acc *AdaptiveConcurrencyController) GetCurrentConcurrency() int {
 	acc.mu.RLock()
 	defer acc.mu.RUnlock()
 	return acc.currentConcurrency
+}
+
+func (acc *AdaptiveConcurrencyController) GetDesiredConcurrency() int {
+	return acc.config.DesiredConcurrency
 }
 
 func (acc *AdaptiveConcurrencyController) GetState() ConcurrencyState {

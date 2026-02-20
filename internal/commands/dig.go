@@ -844,9 +844,16 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 
 	clusterID := meta.clusterID
 
+	authMgr := auth.GetManager()
+	_, err := authMgr.GetToken()
+	if err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Auth: FAILED - %v\n", err)
+		}
+		return err
+	}
+
 	if !jsonOutput {
-		authMgr := auth.GetManager()
-		_, _ = authMgr.GetToken()
 		source := authMgr.GetTokenSource()
 		if source == "cache" {
 			fmt.Printf("Auth: from cache\n")
@@ -857,11 +864,13 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 	}
 
 	cfg := config.Get()
+	fetchTimeout := 5 * time.Minute
 	idleTimeout := 3 * time.Minute
 	if cfg != nil {
+		fetchTimeout = cfg.GetFetchTimeout()
 		idleTimeout = cfg.GetIdleTimeout()
 	}
-	cl := client.NewClientWithTimeout(c, 0, idleTimeout)
+	cl := client.NewClientWithTimeout(c, fetchTimeout, idleTimeout)
 	var cluster *client.Cluster
 	ctx := context.Background()
 
@@ -959,7 +968,7 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 		initialStep = 120
 	}
 
-	qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult := fetchDigMetricsConcurrent(ctx, cl, dsURL, startTS, endTS, initialStep, jsonOutput)
+	qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult := fetchDigMetricsConcurrent(ctx, cl, dsURL, startTS, endTS, initialStep)
 	if qpsResult == nil {
 		saveInactiveCluster(clusterID)
 		if jsonOutput {
@@ -996,15 +1005,15 @@ type InstanceInfo struct {
 	Status   string
 }
 
-func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL string, startTS, endTS, step int, silent bool) (qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult map[string]interface{}) {
+func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL string, startTS, endTS, step int) (qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult map[string]interface{}) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	type metricResult struct {
-		name   string
-		result map[string]interface{}
-		step   int
-		err    error
+		name     string
+		result   map[string]interface{}
+		dataSize int
+		err      error
 	}
 	results := make(chan metricResult, 5)
 
@@ -1026,33 +1035,45 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 		sem = make(chan struct{}, 3)
 	}
 
+	initialChunkSize := 30 * 60
+	adaptiveChunkSize := initialChunkSize
+	totalDuration := endTS - startTS
+
 	completed := 0
 	total := len(metrics)
 
+	chunkInfo := make(map[string]int)
+
 	for _, m := range metrics {
 		wg.Add(1)
-		go func(name, metric string) {
+		go func(name, metric string, chunkSize int) {
 			defer wg.Done()
 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			result, actualStep, err := cl.QueryMetricWithRetry(ctx, dsURL, metric, startTS, endTS, step)
-			_ = actualStep
+			result, err := cl.QueryMetricChunked(ctx, dsURL, metric, startTS, endTS, step, chunkSize)
 
-			results <- metricResult{name: name, result: result, step: actualStep, err: err}
+			var res map[string]interface{}
+			var dataSize int
+			if err == nil && result != nil {
+				res = result.Result
+				dataSize = result.DataSize
+			}
 
-			if !silent {
+			results <- metricResult{name: name, result: res, dataSize: dataSize, err: err}
+
+			{
 				mu.Lock()
 				completed++
 				if err != nil {
 					fmt.Printf("  * (%d/%d) %s: FAILED (%v)\n", completed, total, name, err)
 				} else {
-					fmt.Printf("  * (%d/%d) %s: OK\n", completed, total, name)
+					fmt.Printf("  * (%d/%d) %s: OK (%d points)\n", completed, total, name, dataSize)
 				}
 				mu.Unlock()
 			}
-		}(m.name, m.metric)
+		}(m.name, m.metric, adaptiveChunkSize)
 	}
 
 	go func() {
@@ -1063,6 +1084,7 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 	progressTicker := time.NewTicker(15 * time.Second)
 	defer progressTicker.Stop()
 
+	firstResult := true
 	for {
 		select {
 		case r, ok := <-results:
@@ -1082,21 +1104,44 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 			case "tikvLatency":
 				tikvLatencyResult = r.result
 			}
+
+			if firstResult && r.dataSize > 0 {
+				firstResult = false
+				chunksForDuration := float64(totalDuration) / float64(initialChunkSize)
+				expectedPointsPerChunk := float64(r.dataSize) / chunksForDuration
+
+				if expectedPointsPerChunk > 5000000 {
+					adaptiveChunkSize = 15 * 60
+				} else if expectedPointsPerChunk > 2000000 {
+					adaptiveChunkSize = 20 * 60
+				} else if expectedPointsPerChunk < 100000 && totalDuration > 7*24*3600 {
+					adaptiveChunkSize = 3 * 24 * 3600
+				} else if expectedPointsPerChunk < 200000 && totalDuration > 3*24*3600 {
+					adaptiveChunkSize = 24 * 3600
+				} else if expectedPointsPerChunk < 500000 && totalDuration > 24*3600 {
+					adaptiveChunkSize = 6 * 3600
+				} else if expectedPointsPerChunk < 1000000 && totalDuration > 6*3600 {
+					adaptiveChunkSize = 2 * 3600
+				}
+
+				if adaptiveChunkSize != initialChunkSize {
+					chunkInfo["adjusted"] = adaptiveChunkSize
+				}
+			}
+
 			mu.Unlock()
 		case <-progressTicker.C:
-			if !silent {
-				mu.Lock()
-				pending := total - completed
-				concurrencyInfo := ""
-				if cc := cl.GetConcurrencyController(); cc != nil {
-					concurrencyInfo = fmt.Sprintf(", concurrency: %d", cc.GetCurrentConcurrency())
-				}
-				bytesInfo := formatBytes(cl.GetBytesReceived())
-				if pending > 0 {
-					fmt.Printf("  [INFO] Still fetching metrics%s, %d/%d completed, %s received...\n", concurrencyInfo, completed, total, bytesInfo)
-				}
-				mu.Unlock()
+			mu.Lock()
+			pending := total - completed
+			concurrencyInfo := ""
+			if cc := cl.GetConcurrencyController(); cc != nil {
+				concurrencyInfo = fmt.Sprintf(", concurrency: %d", cc.GetCurrentConcurrency())
 			}
+			bytesInfo := formatBytes(cl.GetBytesReceived())
+			if pending > 0 {
+				fmt.Printf("  [INFO] Still fetching metrics%s, %d/%d completed, %s received...\n", concurrencyInfo, completed, total, bytesInfo)
+			}
+			mu.Unlock()
 		}
 	}
 }
