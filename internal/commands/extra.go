@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"tidbcloud-insight/internal/cache"
+	"tidbcloud-insight/internal/local_cache"
 
 	"github.com/spf13/cobra"
 )

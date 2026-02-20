@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"tidbcloud-insight/internal/auth"
-	"tidbcloud-insight/internal/cache"
 	"tidbcloud-insight/internal/client"
 	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/local_cache"
 
 	"github.com/spf13/cobra"
 )

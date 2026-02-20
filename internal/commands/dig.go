@@ -16,9 +16,9 @@ import (
 
 	"tidbcloud-insight/internal/analysis"
 	"tidbcloud-insight/internal/auth"
-	"tidbcloud-insight/internal/cache"
 	"tidbcloud-insight/internal/client"
 	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/local_cache"
 	"tidbcloud-insight/internal/logger"
 
 	"github.com/spf13/cobra"
