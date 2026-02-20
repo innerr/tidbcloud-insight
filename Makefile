@@ -2,7 +2,7 @@ APP_NAME := tidbcloud-insight
 
 GIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_DIRTY := $(shell git diff --quiet 2>/dev/null || echo "dirty")
-DIRTY_HASH := $(shell git diff --stat 2>/dev/null | git hash-object --stdin 2>/dev/null | cut -c1-8 || echo "")
+DIRTY_HASH := $(if $(GIT_DIRTY),$(shell git diff 2>/dev/null | git hash-object --stdin 2>/dev/null | cut -c1-8),)
 
 VERSION := $(GIT_HASH)$(if $(GIT_DIRTY),-dirty)
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
