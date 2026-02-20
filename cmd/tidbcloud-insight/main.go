@@ -38,6 +38,8 @@ func printVersion() {
 func main() {
 	printVersion()
 
+	localMode := false
+
 	rootCmd := &cobra.Command{
 		Use:   "tidbcloud-insight",
 		Short: "TiDB Cloud Insight Tool",
@@ -69,7 +71,17 @@ Examples:
 			cfg := config.Get()
 			isVerbose := verbose || (cfg != nil && cfg.Logging.Verbose)
 			logger.SetVerbose(isVerbose)
-			auth.GetManager().StartBackgroundRefresh()
+
+			if localFlag, _ := cmd.Flags().GetString("local"); localFlag != "" {
+				localMode = true
+			}
+			if localBool, _ := cmd.Flags().GetBool("local"); localBool {
+				localMode = true
+			}
+
+			if !localMode {
+				auth.GetManager().StartBackgroundRefresh()
+			}
 			return nil
 		},
 	}
@@ -97,7 +109,9 @@ Examples:
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
 	err = rootCmd.Execute()
-	auth.GetManager().Stop()
+	if !localMode {
+		auth.GetManager().Stop()
+	}
 	if err != nil {
 		os.Exit(1)
 	}

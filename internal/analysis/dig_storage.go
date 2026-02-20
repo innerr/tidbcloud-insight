@@ -303,9 +303,12 @@ func (s *DigStorage) loadSimpleMetric(rawDir, name string) []TimeSeriesPoint {
 	}
 
 	jsonFile := filepath.Join(rawDir, name+".json")
-	if data, err := os.ReadFile(jsonFile); err == nil {
+	if f, err := os.Open(jsonFile); err == nil {
+		defer f.Close()
+		dec := json.NewDecoder(f)
+
 		var points []map[string]interface{}
-		if json.Unmarshal(data, &points) == nil {
+		if dec.Decode(&points) == nil {
 			result := make([]TimeSeriesPoint, len(points))
 			for i, p := range points {
 				result[i] = TimeSeriesPoint{
@@ -316,11 +319,13 @@ func (s *DigStorage) loadSimpleMetric(rawDir, name string) []TimeSeriesPoint {
 			return result
 		}
 
+		f.Seek(0, 0)
+		dec = json.NewDecoder(f)
 		var capitalPoints []struct {
 			Timestamp int64   `json:"Timestamp"`
 			Value     float64 `json:"Value"`
 		}
-		if json.Unmarshal(data, &capitalPoints) == nil {
+		if dec.Decode(&capitalPoints) == nil {
 			result := make([]TimeSeriesPoint, len(capitalPoints))
 			for i, p := range capitalPoints {
 				result[i] = TimeSeriesPoint{
@@ -387,9 +392,11 @@ func (s *DigStorage) loadPrometheusMetric(rawDir, name string) map[string]interf
 	}
 
 	jsonFile := filepath.Join(rawDir, name+".json")
-	if data, err := os.ReadFile(jsonFile); err == nil {
+	if f, err := os.Open(jsonFile); err == nil {
+		defer f.Close()
+		dec := json.NewDecoder(f)
 		var result map[string]interface{}
-		if json.Unmarshal(data, &result) == nil {
+		if dec.Decode(&result) == nil {
 			return result
 		}
 	}
