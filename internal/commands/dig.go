@@ -1006,7 +1006,20 @@ type InstanceInfo struct {
 	Status   string
 }
 
+type MetricFiles struct {
+	QPS         string
+	Latency     string
+	SQLType     string
+	TiKVOp      string
+	TiKVLatency string
+}
+
 func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL string, startTS, endTS, step int) (qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult map[string]interface{}) {
+	qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult, _ = fetchDigMetricsWithWriter(ctx, cl, dsURL, startTS, endTS, step, "")
+	return
+}
+
+func fetchDigMetricsWithWriter(ctx context.Context, cl *client.Client, dsURL string, startTS, endTS, step int, outputDir string) (qpsResult, latencyResult, sqlTypeResult, tikvOpResult, tikvLatencyResult map[string]interface{}, files MetricFiles) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -1022,12 +1035,13 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 	metrics := []struct {
 		name   string
 		metric string
+		file   string
 	}{
-		{"qps", "tidb_server_query_total"},
-		{"latency", "tidb_server_handle_query_duration_seconds_bucket"},
-		{"sqlType", "tidb_executor_statement_total"},
-		{"tikvOp", "tikv_grpc_msg_duration_seconds_count"},
-		{"tikvLatency", "tikv_grpc_msg_duration_seconds_bucket"},
+		{"qps", "tidb_server_query_total", "qps.csv"},
+		{"latency", "tidb_server_handle_query_duration_seconds_bucket", "latency.csv"},
+		{"sqlType", "tidb_executor_statement_total", "sql_type.csv"},
+		{"tikvOp", "tikv_grpc_msg_duration_seconds_count", "tikv_op.csv"},
+		{"tikvLatency", "tikv_grpc_msg_duration_seconds_bucket", "tikv_latency.csv"},
 	}
 
 	var sem chan struct{}
@@ -1049,34 +1063,54 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 
 	fmt.Printf("  * (1/5) %s: fetching...\n", metrics[0].name)
 
-	firstResult, err := cl.QueryMetricChunked(ctx, dsURL, metrics[0].metric, startTS, endTS, step, initialChunkSize)
-	if err != nil {
-		fmt.Printf("  * (1/5) %s: FAILED (%v)\n", metrics[0].name, err)
-		results <- metricResult{name: metrics[0].name, err: err}
+	var firstWriter *analysis.CSVMetricWriter
+	var firstResult *client.ChunkedMetricResult
+	var firstErr error
+
+	if outputDir != "" {
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			firstErr = err
+		} else {
+			firstWriter, firstErr = analysis.NewCSVMetricWriter(filepath.Join(outputDir, metrics[0].file))
+		}
+	}
+
+	if firstErr != nil {
+		fmt.Printf("  * (1/5) %s: FAILED (%v)\n", metrics[0].name, firstErr)
+		results <- metricResult{name: metrics[0].name, err: firstErr}
 	} else {
-		byteSize := firstResult.ByteSize
-		dataSize := firstResult.DataSize
-		fmt.Printf("  * (1/5) %s: OK (%d points, %s)\n", metrics[0].name, dataSize, formatBytes(byteSize))
+		firstResult, firstErr = cl.QueryMetricChunkedWithWriter(ctx, dsURL, metrics[0].metric, startTS, endTS, step, initialChunkSize, firstWriter)
+		if firstErr != nil {
+			fmt.Printf("  * (1/5) %s: FAILED (%v)\n", metrics[0].name, firstErr)
+			results <- metricResult{name: metrics[0].name, err: firstErr}
+		} else {
+			byteSize := firstResult.ByteSize
+			dataSize := firstResult.DataSize
+			fmt.Printf("  * (1/5) %s: OK (%d points, %s)\n", metrics[0].name, dataSize, formatBytes(byteSize))
 
-		bytesPerSecond := float64(byteSize) / float64(totalDuration)
-		if bytesPerSecond > 0 {
-			optimalChunkSize := int(float64(targetChunkSize) / bytesPerSecond)
+			bytesPerSecond := float64(byteSize) / float64(totalDuration)
+			if bytesPerSecond > 0 {
+				optimalChunkSize := int(float64(targetChunkSize) / bytesPerSecond)
 
-			minChunkSize := 5 * 60
-			maxChunkSize := 24 * 3600
-			if optimalChunkSize < minChunkSize {
-				optimalChunkSize = minChunkSize
-			} else if optimalChunkSize > maxChunkSize {
-				optimalChunkSize = maxChunkSize
+				minChunkSize := 5 * 60
+				maxChunkSize := 24 * 3600
+				if optimalChunkSize < minChunkSize {
+					optimalChunkSize = minChunkSize
+				} else if optimalChunkSize > maxChunkSize {
+					optimalChunkSize = maxChunkSize
+				}
+
+				if optimalChunkSize != initialChunkSize {
+					adaptiveChunkSize = optimalChunkSize
+					logger.Infof("Adjusted chunk size to %s for target %s/request", formatDuration(time.Duration(adaptiveChunkSize)*time.Second), formatBytes(targetChunkSize))
+				}
 			}
 
-			if optimalChunkSize != initialChunkSize {
-				adaptiveChunkSize = optimalChunkSize
-				logger.Infof("Adjusted chunk size to %s for target %s/request", formatDuration(time.Duration(adaptiveChunkSize)*time.Second), formatBytes(targetChunkSize))
+			results <- metricResult{name: metrics[0].name, result: firstResult.Result, dataSize: dataSize, byteSize: byteSize}
+			if outputDir != "" {
+				files.QPS = filepath.Join(outputDir, metrics[0].file)
 			}
 		}
-
-		results <- metricResult{name: metrics[0].name, result: firstResult.Result, dataSize: dataSize, byteSize: byteSize}
 	}
 
 	completed := 1
@@ -1084,7 +1118,7 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 
 	for i := 1; i < len(metrics); i++ {
 		wg.Add(1)
-		go func(idx int, name, metric string) {
+		go func(idx int, name, metric, file string) {
 			defer wg.Done()
 
 			sem <- struct{}{}
@@ -1094,7 +1128,22 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 			chunkSize := adaptiveChunkSize
 			mu.Unlock()
 
-			result, err := cl.QueryMetricChunked(ctx, dsURL, metric, startTS, endTS, step, chunkSize)
+			var writer *analysis.CSVMetricWriter
+			var err error
+
+			if outputDir != "" {
+				writer, err = analysis.NewCSVMetricWriter(filepath.Join(outputDir, file))
+				if err != nil {
+					results <- metricResult{name: name, err: err}
+					mu.Lock()
+					completed++
+					fmt.Printf("  * (%d/%d) %s: FAILED (%v)\n", completed, total, name, err)
+					mu.Unlock()
+					return
+				}
+			}
+
+			result, err := cl.QueryMetricChunkedWithWriter(ctx, dsURL, metric, startTS, endTS, step, chunkSize, writer)
 
 			var res map[string]interface{}
 			var dataSize int
@@ -1107,17 +1156,25 @@ func fetchDigMetricsConcurrent(ctx context.Context, cl *client.Client, dsURL str
 
 			results <- metricResult{name: name, result: res, dataSize: dataSize, byteSize: byteSize, err: err}
 
-			{
-				mu.Lock()
-				completed++
-				if err != nil {
-					fmt.Printf("  * (%d/%d) %s: FAILED (%v)\n", completed, total, name, err)
-				} else {
-					fmt.Printf("  * (%d/%d) %s: OK (%d points, %s)\n", completed, total, name, dataSize, formatBytes(byteSize))
+			mu.Lock()
+			completed++
+			if err != nil {
+				fmt.Printf("  * (%d/%d) %s: FAILED (%v)\n", completed, total, name, err)
+			} else {
+				fmt.Printf("  * (%d/%d) %s: OK (%d points, %s)\n", completed, total, name, dataSize, formatBytes(byteSize))
+				switch name {
+				case "latency":
+					files.Latency = filepath.Join(outputDir, file)
+				case "sqlType":
+					files.SQLType = filepath.Join(outputDir, file)
+				case "tikvOp":
+					files.TiKVOp = filepath.Join(outputDir, file)
+				case "tikvLatency":
+					files.TiKVLatency = filepath.Join(outputDir, file)
 				}
-				mu.Unlock()
 			}
-		}(i, metrics[i].name, metrics[i].metric)
+			mu.Unlock()
+		}(i, metrics[i].name, metrics[i].metric, metrics[i].file)
 	}
 
 	go func() {
