@@ -3,8 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
-
-	"tidbcloud-insight/internal/local_cache"
+	cache "tidbcloud-insight/internal/local_cache"
 
 	"github.com/spf13/cobra"
 )
@@ -44,7 +43,7 @@ func NewCacheCmd(c *cache.Cache) *cobra.Command {
 			}
 
 			if !list && !clear {
-				cmd.Help()
+				_ = cmd.Help()
 			}
 		},
 	}

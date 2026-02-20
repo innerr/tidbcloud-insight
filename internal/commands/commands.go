@@ -11,7 +11,7 @@ import (
 	"tidbcloud-insight/internal/auth"
 	"tidbcloud-insight/internal/client"
 	"tidbcloud-insight/internal/config"
-	"tidbcloud-insight/internal/local_cache"
+	cache "tidbcloud-insight/internal/local_cache"
 
 	"github.com/spf13/cobra"
 )
@@ -219,8 +219,8 @@ func NewQueryCmd(c *cache.Cache) *cobra.Command {
 	cmd.Flags().IntVar(&step, "step", 60, "Query step in seconds")
 	cmd.Flags().BoolVar(&force, "force", false, "Force refresh cache")
 
-	cmd.MarkFlagRequired("clusterID")
-	cmd.MarkFlagRequired("metrics")
+	_ = cmd.MarkFlagRequired("clusterID")
+	_ = cmd.MarkFlagRequired("metrics")
 
 	cmd.AddCommand(NewCacheCmd(c))
 
@@ -231,11 +231,11 @@ func parseDuration(s string) int {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if strings.HasSuffix(s, "h") {
 		hours := 0
-		fmt.Sscanf(s, "%dh", &hours)
+		_, _ = fmt.Sscanf(s, "%dh", &hours)
 		return hours * 3600
 	} else if strings.HasSuffix(s, "d") {
 		days := 0
-		fmt.Sscanf(s, "%dd", &days)
+		_, _ = fmt.Sscanf(s, "%dd", &days)
 		return days * 86400
 	}
 	return 48 * 3600

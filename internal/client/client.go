@@ -13,7 +13,7 @@ import (
 
 	"tidbcloud-insight/internal/auth"
 	"tidbcloud-insight/internal/config"
-	"tidbcloud-insight/internal/local_cache"
+	cache "tidbcloud-insight/internal/local_cache"
 	"tidbcloud-insight/internal/logger"
 )
 
@@ -166,7 +166,7 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 	}
 
 	if resp.StatusCode == 401 {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		auth.GetManager().InvalidateToken()
 		c.rateLimiter.RecordFailure(resp.StatusCode, fmt.Errorf("unauthorized"))
 		return nil, fmt.Errorf("unauthorized: token expired")
@@ -174,13 +174,13 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 
 	if resp.StatusCode == 429 || resp.StatusCode == 503 {
 		c.rateLimiter.RecordFailure(resp.StatusCode, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("rate limited: HTTP %d", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		c.rateLimiter.RecordFailure(resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
@@ -240,7 +240,7 @@ func (c *Client) fetchClustersPage(ctx context.Context, vendor, region, bizType 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result ClustersResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -345,7 +345,7 @@ func (c *Client) GetDsURL(ctx context.Context, clusterID, vendor, region, bizTyp
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result ClustersResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -361,7 +361,7 @@ func (c *Client) GetDsURL(ctx context.Context, clusterID, vendor, region, bizTyp
 	}
 
 	dsURL := result.Data.Clusters[0].InternalReadURI
-	c.cache.SetDsURLCache(clusterID, dsURL)
+	_ = c.cache.SetDsURLCache(clusterID, dsURL)
 
 	return dsURL, nil
 }
@@ -392,7 +392,7 @@ func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, e
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	logAll := false
 	if cfg := config.Get(); cfg != nil {

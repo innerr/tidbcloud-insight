@@ -114,25 +114,25 @@ func (s *DigStorage) SaveRawData(clusterID string, data *DigRawData) (string, er
 	if data.SQLTypeData != nil {
 		sqlTypeFile := filepath.Join(rawDir, "sql_type.json")
 		sqlTypeJSON, _ := json.MarshalIndent(data.SQLTypeData, "", "  ")
-		os.WriteFile(sqlTypeFile, sqlTypeJSON, 0644)
+		_ = os.WriteFile(sqlTypeFile, sqlTypeJSON, 0644)
 	}
 
 	if data.TiKVOpData != nil {
 		tikvOpFile := filepath.Join(rawDir, "tikv_op.json")
 		tikvOpJSON, _ := json.MarshalIndent(data.TiKVOpData, "", "  ")
-		os.WriteFile(tikvOpFile, tikvOpJSON, 0644)
+		_ = os.WriteFile(tikvOpFile, tikvOpJSON, 0644)
 	}
 
 	if data.TiKVLatencyData != nil {
 		tikvLatencyFile := filepath.Join(rawDir, "tikv_latency.json")
 		tikvLatencyJSON, _ := json.MarshalIndent(data.TiKVLatencyData, "", "  ")
-		os.WriteFile(tikvLatencyFile, tikvLatencyJSON, 0644)
+		_ = os.WriteFile(tikvLatencyFile, tikvLatencyJSON, 0644)
 	}
 
 	if data.TopologyData != nil {
 		topologyFile := filepath.Join(rawDir, "topology.json")
 		topologyJSON, _ := json.MarshalIndent(data.TopologyData, "", "  ")
-		os.WriteFile(topologyFile, topologyJSON, 0644)
+		_ = os.WriteFile(topologyFile, topologyJSON, 0644)
 	}
 
 	metaFile := filepath.Join(rawDir, "meta.json")
@@ -204,7 +204,7 @@ func (s *DigStorage) updateIndex(clusterID string, timestamp int64) {
 	index.ClusterID = clusterID
 
 	if data, err := os.ReadFile(indexPath); err == nil {
-		json.Unmarshal(data, &index)
+		_ = json.Unmarshal(data, &index)
 	}
 
 	index.LastUpdate = time.Now().Unix()
@@ -225,7 +225,7 @@ func (s *DigStorage) updateIndex(clusterID string, timestamp int64) {
 	}
 
 	data, _ := json.MarshalIndent(index, "", "  ")
-	os.WriteFile(indexPath, data, 0644)
+	_ = os.WriteFile(indexPath, data, 0644)
 }
 
 func (s *DigStorage) LoadAnomalies(clusterID string, timestamp int64) (*DigAnomalyRecord, error) {
@@ -405,7 +405,7 @@ func (s *DigStorage) cleanupInvalidSessions(clusterID string) {
 				metaFile := filepath.Join(s.getRawDir(clusterID, ts), "meta.json")
 				if _, err := os.Stat(metaFile); os.IsNotExist(err) {
 					sessionDir := s.getSessionDir(clusterID, ts)
-					os.RemoveAll(sessionDir)
+					_ = os.RemoveAll(sessionDir)
 				}
 			}
 		}
@@ -541,10 +541,10 @@ func (s *DigStorage) DeleteSession(clusterID string, timestamp int64) error {
 	index.LastUpdate = time.Now().Unix()
 
 	updatedData, _ := json.MarshalIndent(index, "", "  ")
-	os.WriteFile(indexPath, updatedData, 0644)
+	_ = os.WriteFile(indexPath, updatedData, 0644)
 
 	if len(newTimestamps) == 0 {
-		os.RemoveAll(s.getClusterDir(clusterID))
+		_ = os.RemoveAll(s.getClusterDir(clusterID))
 	}
 
 	return nil

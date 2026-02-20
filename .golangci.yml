@@ -1,7 +1,23 @@
+# golangci-lint configuration for tidbcloud-insight
+# See: https://golangci-lint.run/usage/configuration/
+
 run:
   timeout: 5m
+
+issues:
+  exclude-dirs:
+    - bin
+    - vendor
+  exclude-use-default: false
 
 linters:
   disable-all: true
   enable:
+    - gofmt
+    - goimports
+    - errcheck
     - govet
+
+linters-settings:
+  gofmt:
+    simplify: true

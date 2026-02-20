@@ -18,7 +18,7 @@ import (
 	"tidbcloud-insight/internal/auth"
 	"tidbcloud-insight/internal/client"
 	"tidbcloud-insight/internal/config"
-	"tidbcloud-insight/internal/local_cache"
+	cache "tidbcloud-insight/internal/local_cache"
 	"tidbcloud-insight/internal/logger"
 
 	"github.com/spf13/cobra"
@@ -43,7 +43,7 @@ func loadInactiveClusters() map[string]bool {
 	if err != nil {
 		return result
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -67,9 +67,9 @@ func saveInactiveCluster(clusterID string) {
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
-	file.WriteString(clusterID + "\n")
+	_, _ = file.WriteString(clusterID + "\n")
 }
 
 func fromAPIBizType(apiBizType string) string {
@@ -127,7 +127,7 @@ Examples:
 
 			if len(args) == 0 {
 				fmt.Fprintln(os.Stderr, "Error: cluster_id is required, or use 'dig random' or 'dig --local <id>'")
-				cmd.Help()
+				_ = cmd.Help()
 				os.Exit(1)
 			}
 			clusterID := args[0]
@@ -499,7 +499,7 @@ func runDigAnalysisFromRawData(clusterID string, timestamp int64, rawData *analy
 
 	if len(qpsTimeSeries) == 0 {
 		if jsonOutput {
-			json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
 				"error":      "No QPS data in cache",
 				"cluster_id": clusterID,
 			})
@@ -587,7 +587,7 @@ func runDigAnalysisFromRawData(clusterID string, timestamp int64, rawData *analy
 	for _, a := range uniqueAnomalies {
 		anomalyRecord.ByType[string(a.Type)]++
 	}
-	storage.SaveAnomalies(clusterID, anomalyRecord)
+	_, _ = storage.SaveAnomalies(clusterID, anomalyRecord)
 
 	if jsonOutput {
 		elapsed := time.Since(startTime)
@@ -610,7 +610,7 @@ func runDigAnalysisFromRawData(clusterID string, timestamp int64, rawData *analy
 		if loadProfile != nil {
 			result["load_profile"] = loadProfile
 		}
-		json.NewEncoder(os.Stdout).Encode(result)
+		_ = json.NewEncoder(os.Stdout).Encode(result)
 		return
 	}
 
@@ -973,7 +973,7 @@ func runDig(c *cache.Cache, meta clusterMeta, duration string, jsonOutput bool) 
 	if qpsResult == nil {
 		saveInactiveCluster(clusterID)
 		if jsonOutput {
-			json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
 				"error":      "No QPS data",
 				"cluster_id": clusterID,
 			})
@@ -1381,7 +1381,7 @@ func runDigAnalysis(clusterID, provider, region, bizType string, qpsResult, late
 
 	if len(allTS) == 0 {
 		if jsonOutput {
-			json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
 				"error":      "No valid QPS data",
 				"cluster_id": clusterID,
 			})
@@ -1709,7 +1709,7 @@ func runDigAnalysis(clusterID, provider, region, bizType string, qpsResult, late
 		if advancedProfiling != nil {
 			result["advanced_profiling"] = advancedProfiling
 		}
-		json.NewEncoder(os.Stdout).Encode(result)
+		_ = json.NewEncoder(os.Stdout).Encode(result)
 		return
 	}
 

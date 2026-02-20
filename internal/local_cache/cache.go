@@ -50,7 +50,7 @@ func (c *Cache) loadIndex() {
 	if err != nil {
 		return
 	}
-	json.Unmarshal(data, &c.index)
+	_ = json.Unmarshal(data, &c.index)
 }
 
 func (c *Cache) saveIndex() error {
@@ -176,7 +176,7 @@ func (c *Cache) Clear() error {
 			continue
 		}
 		path := filepath.Join(c.queryDir, entry.Name())
-		os.RemoveAll(path)
+		_ = os.RemoveAll(path)
 	}
 
 	c.index = MetricsIndex{
@@ -226,7 +226,7 @@ func (c *Cache) SetDsURLCache(clusterID, dsURL string) error {
 	cache := make(map[string]string)
 	data, err := os.ReadFile(cacheFile)
 	if err == nil {
-		json.Unmarshal(data, &cache)
+		_ = json.Unmarshal(data, &cache)
 	}
 
 	cache[clusterID] = dsURL
