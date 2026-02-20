@@ -10,8 +10,14 @@ meta: "./meta"
 
 fetch_timeout: "5m"
 
+idle_timeout: "3m"
+
 rate_limit:
   max_backoff: "5m"
   desired_concurrency: 3
   recovery_interval: "30s"
   min_recovery_interval: "10s"
+
+logging:
+  log_all_http_codes: false
+  verbose: false

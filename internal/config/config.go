@@ -15,6 +15,7 @@ type Config struct {
 	RateLimit    RateLimitConfig `yaml:"rate_limit"`
 	FetchTimeout string          `yaml:"fetch_timeout"`
 	IdleTimeout  string          `yaml:"idle_timeout"`
+	Logging      LoggingConfig   `yaml:"logging"`
 }
 
 type AuthConfig struct {
@@ -29,6 +30,11 @@ type RateLimitConfig struct {
 	DesiredConcurrency  int    `yaml:"desired_concurrency"`
 	RecoveryInterval    string `yaml:"recovery_interval"`
 	MinRecoveryInterval string `yaml:"min_recovery_interval"`
+}
+
+type LoggingConfig struct {
+	LogAllHTTPCodes bool `yaml:"log_all_http_codes"`
+	Verbose         bool `yaml:"verbose"`
 }
 
 func (r RateLimitConfig) GetMaxBackoff() time.Duration {

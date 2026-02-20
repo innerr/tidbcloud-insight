@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/logger"
 )
 
 type Manager struct {
@@ -26,6 +29,10 @@ type Manager struct {
 	refreshCh  chan struct{}
 
 	lastTokenSource string
+
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgWg     sync.WaitGroup
 }
 
 var (
@@ -35,10 +42,13 @@ var (
 
 func GetManager() *Manager {
 	managerOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
 		defaultManager = &Manager{
 			cfg:       config.Get(),
 			cachePath: getCacheFilePath(),
 			refreshCh: make(chan struct{}, 1),
+			bgCtx:     ctx,
+			bgCancel:  cancel,
 		}
 		defaultManager.loadFromCache()
 	})
@@ -75,6 +85,7 @@ func (m *Manager) loadFromCache() {
 		m.expiry = cache.Expiry
 		m.lastTokenSource = "cache"
 		m.mu.Unlock()
+		logger.Infof("[Auth] loaded token from cache, expires at %v", cache.Expiry.Format(time.RFC3339))
 	}
 }
 
@@ -122,7 +133,8 @@ func (m *Manager) fetchNewToken() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("OAuth request failed with status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("OAuth request failed with status %d: %s (client_id=%s, audience=%s)", resp.StatusCode, string(body), m.cfg.Auth.ClientID, m.cfg.Auth.Audience)
 	}
 
 	var result struct {
@@ -141,7 +153,11 @@ func (m *Manager) fetchNewToken() error {
 	m.lastTokenSource = "remote"
 	m.mu.Unlock()
 
-	_ = m.saveToCache()
+	if err := m.saveToCache(); err != nil {
+		logger.Warnf("[Auth] failed to save token to cache: %v", err)
+	} else {
+		logger.Infof("[Auth] token saved to cache, expires at %v", m.expiry.Format(time.RFC3339))
+	}
 
 	return nil
 }
@@ -221,4 +237,65 @@ func (m *Manager) IsTokenValid() bool {
 
 func GetOAuthToken() (string, error) {
 	return GetManager().GetToken()
+}
+
+func (m *Manager) StartBackgroundRefresh() {
+	m.bgWg.Add(1)
+	go m.backgroundRefreshLoop()
+	logger.Infof("[Auth] background refresh started")
+}
+
+func (m *Manager) Stop() {
+	m.bgCancel()
+	m.bgWg.Wait()
+	logger.Infof("[Auth] background refresh stopped")
+}
+
+func (m *Manager) backgroundRefreshLoop() {
+	defer m.bgWg.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.bgCtx.Done():
+			return
+		case <-ticker.C:
+			m.checkAndRefreshToken()
+		}
+	}
+}
+
+func (m *Manager) checkAndRefreshToken() {
+	m.mu.RLock()
+	expiry := m.expiry
+	m.mu.RUnlock()
+
+	if expiry.IsZero() {
+		return
+	}
+
+	timeUntilExpiry := time.Until(expiry)
+	refreshThreshold := 5 * time.Minute
+
+	if timeUntilExpiry < refreshThreshold {
+		logger.Infof("[Auth] token expiring in %v, refreshing proactively", timeUntilExpiry)
+		_, _ = m.getTokenWithRefresh()
+	}
+}
+
+func (m *Manager) GetExpiry() time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.expiry
+}
+
+func (m *Manager) GetTimeUntilExpiry() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.expiry.IsZero() {
+		return 0
+	}
+	return time.Until(m.expiry)
 }

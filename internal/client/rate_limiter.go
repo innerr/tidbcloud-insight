@@ -2,13 +2,13 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
 
 	"tidbcloud-insight/internal/backoff"
 	"tidbcloud-insight/internal/config"
+	"tidbcloud-insight/internal/logger"
 )
 
 type RateLimiterConfig struct {
@@ -17,7 +17,6 @@ type RateLimiterConfig struct {
 	ConsecutiveFailThreshold int
 	BackoffInitial           time.Duration
 	BackoffMax               time.Duration
-	Verbose                  bool
 	GetConcurrencyFunc       func() int
 	ProgressInterval         time.Duration
 	OnBackoffCallback        func()
@@ -29,7 +28,6 @@ type RateLimiter struct {
 	maxRequestsPerSecond     int
 	minInterval              time.Duration
 	consecutiveFailThreshold int
-	verbose                  bool
 	getConcurrencyFunc       func() int
 	progressInterval         time.Duration
 	onBackoffCallback        func()
@@ -68,7 +66,6 @@ func DefaultRateLimiterConfig() RateLimiterConfig {
 		ConsecutiveFailThreshold: 3,
 		BackoffInitial:           1 * time.Second,
 		BackoffMax:               maxBackoff,
-		Verbose:                  true,
 	}
 }
 
@@ -101,7 +98,6 @@ func NewRateLimiter(cfg RateLimiterConfig) *RateLimiter {
 		maxRequestsPerSecond:     cfg.MaxRequestsPerSecond,
 		minInterval:              cfg.MinInterval,
 		consecutiveFailThreshold: cfg.ConsecutiveFailThreshold,
-		verbose:                  cfg.Verbose,
 		getConcurrencyFunc:       cfg.GetConcurrencyFunc,
 		progressInterval:         cfg.ProgressInterval,
 		onBackoffCallback:        cfg.OnBackoffCallback,
@@ -131,13 +127,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func (r *RateLimiter) getConcurrencyInfo() string {
-	r.mu.Lock()
-	active := r.activeRequests
-	r.mu.Unlock()
-	if r.getConcurrencyFunc != nil {
-		return fmt.Sprintf(", concurrency: %d, active: %d", r.getConcurrencyFunc(), active)
-	}
-	return fmt.Sprintf(", active: %d", active)
+	return ""
 }
 
 func (r *RateLimiter) Wait(ctx context.Context) error {
@@ -160,10 +150,7 @@ func (r *RateLimiter) Wait(ctx context.Context) error {
 			break
 		}
 
-		if r.verbose {
-			fmt.Printf("  [INFO] Rate limited%s, waiting %s...\n",
-				r.getConcurrencyInfo(), formatDuration(remaining))
-		}
+		logger.Infof("Rate limited, waiting %s...", formatDuration(remaining))
 
 		waitCh := make(chan struct{})
 		go func() {
@@ -299,14 +286,12 @@ func (r *RateLimiter) RecordFailure(statusCode int, err error) {
 		r.currentBackoffInterval = interval
 		r.inBackoff = true
 
-		if r.verbose {
-			if isRateLimit {
-				fmt.Printf("  [WARN] Rate limited by server (HTTP %d)%s, backing off for %s\n",
-					statusCode, r.getConcurrencyInfo(), formatDuration(interval))
-			} else {
-				fmt.Printf("  [WARN] Request failures: %d consecutive%s, backing off for %s\n",
-					r.consecutiveFails, r.getConcurrencyInfo(), formatDuration(interval))
-			}
+		if isRateLimit {
+			logger.Warnf("Rate limited by server (HTTP %d), backing off for %s",
+				statusCode, formatDuration(interval))
+		} else {
+			logger.Warnf("Request failures: %d consecutive, backing off for %s",
+				r.consecutiveFails, formatDuration(interval))
 		}
 
 		if r.onBackoffCallback != nil {
@@ -324,7 +309,7 @@ func (r *RateLimiter) GetStats() (total, success, failed int64) {
 func (r *RateLimiter) PrintStats() {
 	total, success, failed := r.GetStats()
 	if total > 0 {
-		fmt.Printf("[INFO] Rate limiter stats: %d requests, %d success, %d failed%s\n",
-			total, success, failed, r.getConcurrencyInfo())
+		logger.Infof("Rate limiter stats: %d requests, %d success, %d failed",
+			total, success, failed)
 	}
 }
