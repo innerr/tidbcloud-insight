@@ -91,9 +91,7 @@ func NewClientWithTimeout(c *cache.Cache, timeout time.Duration, idleTimeout tim
 
 	httpClient := &http.Client{
 		Transport: transport,
-	}
-	if timeout > 0 {
-		httpClient.Timeout = timeout
+		Timeout:   0,
 	}
 
 	if idleTimeout <= 0 {
@@ -382,6 +380,14 @@ func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, e
 		params = url.Values{}
 		params.Set("query", metric)
 	}
+
+	fetchTimeout := 5 * time.Minute
+	if cfg := config.Get(); cfg != nil {
+		fetchTimeout = cfg.GetFetchTimeout()
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL+"?"+params.Encode(), nil)
 	if err != nil {
