@@ -437,6 +437,9 @@ func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([
 	idleTimer := time.NewTimer(c.idleTimeout)
 	defer idleTimer.Stop()
 
+	done := make(chan struct{})
+	defer close(done)
+
 	go func() {
 		buf := make([]byte, 32*1024)
 		var allData []byte
@@ -446,7 +449,8 @@ func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([
 				allData = append(allData, buf[:n]...)
 				select {
 				case progressChan <- struct{}{}:
-				default:
+				case <-done:
+					return
 				}
 			}
 			if err != nil {
@@ -516,58 +520,91 @@ func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, s
 		return &ChunkedMetricResult{Result: result, DataSize: dataSize, ByteSize: byteSize}, nil
 	}
 
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	chunkResults := make([]map[string]interface{}, len(chunks))
-	errors := make([]error, len(chunks))
-
 	maxConcurrency := 3
 	if c.concurrency != nil {
 		maxConcurrency = c.concurrency.GetCurrentConcurrency()
 	}
+
+	type chunkResult struct {
+		idx    int
+		result map[string]interface{}
+		err    error
+	}
+
+	resultChan := make(chan chunkResult, maxConcurrency)
 	sem := make(chan struct{}, maxConcurrency)
 
-	for i, chunk := range chunks {
-		wg.Add(1)
-		go func(idx int, chunkStart, chunkEnd int) {
-			defer wg.Done()
-
+	go func() {
+		var wg sync.WaitGroup
+		for i, chunk := range chunks {
 			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
 			case <-ctx.Done():
-				mu.Lock()
-				errors[idx] = ctx.Err()
-				mu.Unlock()
-				return
+				resultChan <- chunkResult{idx: i, err: ctx.Err()}
+				continue
+			case sem <- struct{}{}:
 			}
 
-			result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, chunkStart, chunkEnd, step)
+			wg.Add(1)
+			go func(idx, chunkStart, chunkEnd int) {
+				defer wg.Done()
+				defer func() { <-sem }()
 
-			mu.Lock()
-			chunkResults[idx] = result
-			errors[idx] = err
-			mu.Unlock()
-		}(i, chunk[0], chunk[1])
-	}
+				result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, chunkStart, chunkEnd, step)
+				select {
+				case resultChan <- chunkResult{idx: idx, result: result, err: err}:
+				case <-ctx.Done():
+				}
+			}(i, chunk[0], chunk[1])
+		}
+		wg.Wait()
+		close(resultChan)
+	}()
 
-	wg.Wait()
+	allResults := make([]map[string]interface{}, len(chunks))
+	received := 0
+	failed := 0
 
-	var validResults []map[string]interface{}
-	for i, result := range chunkResults {
-		if errors[i] == nil && result != nil {
-			validResults = append(validResults, result)
+	progressTicker := time.NewTicker(30 * time.Second)
+	defer progressTicker.Stop()
+
+	for {
+		select {
+		case r, ok := <-resultChan:
+			if !ok {
+				var validResults []map[string]interface{}
+				for _, res := range allResults {
+					if res != nil {
+						validResults = append(validResults, res)
+					}
+				}
+
+				if len(validResults) == 0 {
+					return nil, fmt.Errorf("all chunks failed for metric %s", metric)
+				}
+
+				merged := mergeChunkedResults(validResults)
+				dataSize := estimateDataSize(merged)
+				byteSize := estimateByteSize(merged)
+				return &ChunkedMetricResult{Result: merged, DataSize: dataSize, ByteSize: byteSize}, nil
+			}
+
+			if r.err != nil {
+				failed++
+			} else if r.result != nil {
+				allResults[r.idx] = r.result
+				received++
+			}
+
+		case <-progressTicker.C:
+			pending := len(chunks) - received - failed
+			if pending > 0 {
+				logger.Infof("Metric %s: %d/%d chunks done, %d failed, %d pending", metric, received, len(chunks), failed, pending)
+			}
+
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-
-	if len(validResults) == 0 {
-		return nil, fmt.Errorf("all chunks failed for metric %s", metric)
-	}
-
-	merged := mergeChunkedResults(validResults)
-	dataSize := estimateDataSize(merged)
-	byteSize := estimateByteSize(merged)
-	return &ChunkedMetricResult{Result: merged, DataSize: dataSize, ByteSize: byteSize}, nil
 }
 
 func estimateDataSize(result map[string]interface{}) int {
