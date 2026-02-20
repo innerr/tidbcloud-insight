@@ -152,33 +152,46 @@ func (r *RateLimiter) Wait(ctx context.Context) error {
 
 		logger.Infof("Rate limited, waiting %s...", formatDuration(remaining))
 
-		waitCh := make(chan struct{})
-		go func() {
-			time.Sleep(remaining + 100*time.Millisecond)
-			r.cond.Broadcast()
-			close(waitCh)
-		}()
+		progressInterval := 10 * time.Second
+		if r.progressInterval > 0 {
+			progressInterval = r.progressInterval
+		}
+
+		progressTicker := time.NewTicker(progressInterval)
+		defer progressTicker.Stop()
 
 		done := make(chan struct{})
 		go func() {
-			select {
-			case <-ctx.Done():
-				r.cond.Broadcast()
-			case <-done:
+			defer close(done)
+			for {
+				select {
+				case <-ctx.Done():
+					r.cond.Broadcast()
+					return
+				case <-progressTicker.C:
+					r.mu.Lock()
+					remaining := time.Until(r.backoffUntil)
+					r.mu.Unlock()
+					if remaining > 0 {
+						logger.Infof("Still in backoff, %s remaining...", formatDuration(remaining))
+					} else {
+						r.cond.Broadcast()
+						return
+					}
+				}
 			}
 		}()
 
 		r.cond.Wait()
+		progressTicker.Stop()
 		close(done)
 
 		select {
 		case <-ctx.Done():
-			<-waitCh
 			r.mu.Unlock()
 			return ctx.Err()
 		default:
 		}
-		<-waitCh
 
 		if time.Now().After(r.backoffUntil) {
 			r.inBackoff = false
