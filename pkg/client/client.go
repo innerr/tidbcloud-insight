@@ -158,6 +158,12 @@ func NewClientSerial(c *cache.Cache) *Client {
 	}
 }
 
+func NewClientSerialWithAuth(c *cache.Cache, authMgr *auth.Manager) *Client {
+	cl := NewClientSerial(c)
+	cl.authMgr = authMgr
+	return cl
+}
+
 func NewClientWithTimeout(c *cache.Cache, timeout time.Duration, idleTimeout time.Duration, displayVerb bool) *Client {
 	acc := NewAdaptiveConcurrencyController(DefaultAdaptiveConcurrencyConfig())
 
@@ -305,6 +311,15 @@ func (c *Client) doRequestWithRetry(ctx context.Context, req *http.Request, maxR
 				return nil, ctx.Err()
 			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
 			}
+		}
+
+		if c.authMgr == nil {
+			resp, err := c.doRequest(ctx, req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return resp, nil
 		}
 
 		token, err := c.authMgr.GetToken()

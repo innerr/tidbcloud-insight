@@ -8,9 +8,22 @@ import (
 	"strings"
 	"time"
 
+	"tidbcloud-insight/pkg/auth"
 	"tidbcloud-insight/pkg/client"
 	cache "tidbcloud-insight/pkg/local_cache"
 )
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 func toAPIBizType(bizTypeKey string) string {
 	switch bizTypeKey {
@@ -23,7 +36,7 @@ func toAPIBizType(bizTypeKey string) string {
 	}
 }
 
-func RawClusters(cacheDir, metaDir, bizType string, timeout time.Duration, pageSize int) string {
+func RawClusters(cacheDir, metaDir, bizType string, timeout time.Duration, pageSize int, authMgr *auth.Manager) string {
 	c, err := cache.NewCache(cacheDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing cache: %v\n", err)
@@ -56,7 +69,7 @@ func RawClusters(cacheDir, metaDir, bizType string, timeout time.Duration, pageS
 		{Vendor: "alicloud", Region: "us-east-1"},
 	}
 
-	cl := client.NewClientSerial(c)
+	cl := client.NewClientSerialWithAuth(c, authMgr)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -78,7 +91,7 @@ func RawClusters(cacheDir, metaDir, bizType string, timeout time.Duration, pageS
 	seen := make(map[string]bool)
 	var uniqueClusters []client.Cluster
 	for _, cluster := range allClusters {
-		if cluster.ApplicationID != "" && !seen[cluster.ApplicationID] {
+		if cluster.ApplicationID != "" && !seen[cluster.ApplicationID] && isAllDigits(cluster.ApplicationID) {
 			seen[cluster.ApplicationID] = true
 			uniqueClusters = append(uniqueClusters, cluster)
 		}
