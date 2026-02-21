@@ -32,7 +32,11 @@ func ClustersDedicatedFetch(
 		pageSize = 500
 	}
 
-	outputFile := impl.RawClusters(cacheDir, metaDir, "dedicated", timeout, pageSize)
+	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authMgr.StartBackgroundRefresh()
+	defer authMgr.Stop()
+
+	outputFile := impl.RawClusters(cacheDir, metaDir, "dedicated", timeout, pageSize, authMgr)
 	if outputFile != "" {
 		env.GetLayer(model.EnvLayerSession).Set(EnvKeyClustersListFile, outputFile)
 	}
@@ -63,7 +67,11 @@ func ClustersPremiumFetch(
 		pageSize = 500
 	}
 
-	outputFile := impl.RawClusters(cacheDir, metaDir, "premium", timeout, pageSize)
+	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authMgr.StartBackgroundRefresh()
+	defer authMgr.Stop()
+
+	outputFile := impl.RawClusters(cacheDir, metaDir, "premium", timeout, pageSize, authMgr)
 	if outputFile != "" {
 		env.GetLayer(model.EnvLayerSession).Set(EnvKeyClustersListFile, outputFile)
 	}
