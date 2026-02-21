@@ -18,13 +18,13 @@ LDFLAGS := -ldflags "-s -w \
 all: build
 
 build:
-	go build $(LDFLAGS) -o $(APP_NAME) ./cmd/$(APP_NAME)
+	go build $(LDFLAGS) -o bin/$(APP_NAME) ./pkg/main
 
 install:
-	go install $(LDFLAGS) ./cmd/$(APP_NAME)
+	go install $(LDFLAGS) ./pkg/main
 
 run:
-	go run ./cmd/$(APP_NAME)
+	go run ./pkg/main
 
 test:
 	go test -v ./...

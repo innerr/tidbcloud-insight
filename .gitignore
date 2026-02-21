@@ -36,6 +36,7 @@ go.work.sum
 /tidbcloud-insight
 /cache
 /docs/drafts
+/bin
 /meta/dedicated/clusters.json
 /meta/dedicated/clusters.txt
 /meta/premium/clusters.json
