@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	MergeThresholdBytes = 200 * 1024 * 1024
+	MergeThresholdBytes = 500 * 1024 * 1024
 	GapThresholdSeconds = 300
 )
 

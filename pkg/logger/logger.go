@@ -89,7 +89,7 @@ func (l *Logger) isVerbose() bool {
 }
 
 func (l *Logger) log(level string, levelVal LogLevel, msg string) {
-	if levelVal < INFO && !l.isVerbose() {
+	if levelVal <= INFO && !l.isVerbose() {
 		return
 	}
 	ts := formatTimestamp()
@@ -99,7 +99,7 @@ func (l *Logger) log(level string, levelVal LogLevel, msg string) {
 		if l.hasConcurrencyProvider() {
 			current, desired := l.getConcurrency()
 			gid := getGoroutineID()
-			log.Printf("%s[%s] %s concurrency: %d/%d goroutine: #%d %s%s", darkGray, level, ts, current, desired, gid, msg, reset)
+			log.Printf("%s[%s] %s conc: %d/%d grid: #%d %s%s", darkGray, level, ts, current, desired, gid, msg, reset)
 		} else {
 			log.Printf("%s[%s] %s %s%s", darkGray, level, ts, msg, reset)
 		}
@@ -107,7 +107,7 @@ func (l *Logger) log(level string, levelVal LogLevel, msg string) {
 		if l.hasConcurrencyProvider() {
 			current, desired := l.getConcurrency()
 			gid := getGoroutineID()
-			log.Printf("[%s] %s concurrency: %d/%d goroutine: #%d %s", level, ts, current, desired, gid, msg)
+			log.Printf("[%s] %s conc: %d/%d grid: #%d %s", level, ts, current, desired, gid, msg)
 		} else {
 			log.Printf("[%s] %s %s", level, ts, msg)
 		}
@@ -131,11 +131,11 @@ func (l *Logger) hasConcurrencyProvider() bool {
 }
 
 func (l *Logger) Debug(msg string) {
-	l.log("DEBUG", DEBUG, msg)
+	l.log("DBUG", DEBUG, msg)
 }
 
 func (l *Logger) Debugf(format string, args ...interface{}) {
-	l.log("DEBUG", DEBUG, fmt.Sprintf(format, args...))
+	l.log("DBUG", DEBUG, fmt.Sprintf(format, args...))
 }
 
 func (l *Logger) Info(msg string) {

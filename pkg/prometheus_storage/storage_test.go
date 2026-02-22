@@ -1,6 +1,7 @@
 package prometheus_storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -781,5 +782,346 @@ func TestFileSizeFormatting(t *testing.T) {
 	result3 := info3.FormatFileSize()
 	if result3 != "512 B" {
 		t.Errorf("expected 512 B, got %s", result3)
+	}
+}
+
+func TestMergeAdjacentFiles_ExceedsThreshold(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "prometheus_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	metricDir := filepath.Join(tmpDir, "test_cluster", "test_metric")
+	if err := os.MkdirAll(metricDir, 0755); err != nil {
+		t.Fatalf("failed to create metric dir: %v", err)
+	}
+
+	largeContent := make([]byte, 101*1024*1024)
+	for i := range largeContent {
+		largeContent[i] = ' '
+	}
+	largeContentStr := "# TYPE test gauge\n" + string(largeContent)
+
+	if err := os.WriteFile(filepath.Join(metricDir, "2021-12-20_19-06-40_2021-12-20_19-07-00.prom"), []byte(largeContentStr), 0644); err != nil {
+		t.Fatalf("failed to write first large file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(metricDir, "2021-12-20_19-07-00_2021-12-20_19-08-00.prom"), []byte(largeContentStr), 0644); err != nil {
+		t.Fatalf("failed to write second large file: %v", err)
+	}
+
+	s := NewPrometheusStorage(tmpDir)
+	if err := s.MergeAdjacentFiles("test_cluster", "test_metric"); err != nil {
+		t.Fatalf("MergeAdjacentFiles failed: %v", err)
+	}
+
+	files, err := s.ListMetricFiles("test_cluster", "test_metric")
+	if err != nil {
+		t.Fatalf("ListMetricFiles failed: %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Errorf("expected 2 files (should not merge large files), got %d", len(files))
+	}
+}
+
+func TestIncrementalFetch(t *testing.T) {
+	tests := []struct {
+		name             string
+		existingData     [][2]int64
+		requestRange     [2]int64
+		expectedGaps     [][2]int64
+		expectedGapCount int
+		description      string
+	}{
+		{
+			name:             "no existing data - full fetch",
+			existingData:     nil,
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     [][2]int64{{1000, 2000}},
+			expectedGapCount: 1,
+			description:      "should fetch entire range when no data exists",
+		},
+		{
+			name:             "existing data covers request - no fetch",
+			existingData:     [][2]int64{{500, 2500}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     nil,
+			expectedGapCount: 0,
+			description:      "should skip fetch when data already cached",
+		},
+		{
+			name:             "partial overlap at start - fetch tail",
+			existingData:     [][2]int64{{500, 1500}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     [][2]int64{{1500, 2000}},
+			expectedGapCount: 1,
+			description:      "should fetch only the uncached tail portion",
+		},
+		{
+			name:             "partial overlap at end - fetch head",
+			existingData:     [][2]int64{{1500, 2500}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     [][2]int64{{1000, 1500}},
+			expectedGapCount: 1,
+			description:      "should fetch only the uncached head portion",
+		},
+		{
+			name:             "gap in middle - fetch two parts",
+			existingData:     [][2]int64{{1200, 1800}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     [][2]int64{{1000, 1200}, {1800, 2000}},
+			expectedGapCount: 2,
+			description:      "should fetch both gaps around existing data",
+		},
+		{
+			name:             "multiple gaps - complex case",
+			existingData:     [][2]int64{{1100, 1300}, {1500, 1700}, {1900, 2100}},
+			requestRange:     [2]int64{1000, 3000},
+			expectedGaps:     [][2]int64{{1000, 1100}, {1300, 1500}, {1700, 1900}, {2100, 3000}},
+			expectedGapCount: 4,
+			description:      "should identify all gaps in complex scenario",
+		},
+		{
+			name:             "adjacent existing data - single gap",
+			existingData:     [][2]int64{{500, 1000}, {2000, 2500}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     [][2]int64{{1000, 2000}},
+			expectedGapCount: 1,
+			description:      "should handle adjacent existing ranges",
+		},
+		{
+			name:             "exact match - no fetch",
+			existingData:     [][2]int64{{1000, 2000}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     nil,
+			expectedGapCount: 0,
+			description:      "should skip when exact range exists",
+		},
+		{
+			name:             "overlapping existing ranges - consolidate",
+			existingData:     [][2]int64{{500, 1500}, {1400, 2500}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     nil,
+			expectedGapCount: 0,
+			description:      "should recognize overlapping ranges cover the request",
+		},
+		{
+			name:             "small gap between ranges",
+			existingData:     [][2]int64{{500, 1500}, {1550, 2500}},
+			requestRange:     [2]int64{1000, 2000},
+			expectedGaps:     [][2]int64{{1500, 1550}},
+			expectedGapCount: 1,
+			description:      "should identify small gap between adjacent ranges",
+		},
+	}
+
+	s := &PrometheusStorage{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var existingRanges []TimeSegment
+			for _, r := range tt.existingData {
+				existingRanges = append(existingRanges, TimeSegment{Start: r[0], End: r[1]})
+			}
+
+			gaps := s.CalculateNonOverlappingRanges(tt.requestRange[0], tt.requestRange[1], existingRanges)
+
+			if len(gaps) != tt.expectedGapCount {
+				t.Errorf("%s: expected %d gaps, got %d: %v", tt.description, tt.expectedGapCount, len(gaps), gaps)
+				return
+			}
+
+			for i, exp := range tt.expectedGaps {
+				if i >= len(gaps) {
+					t.Errorf("%s: missing gap %d: expected [%d, %d]", tt.description, i, exp[0], exp[1])
+					continue
+				}
+				if gaps[i][0] != exp[0] || gaps[i][1] != exp[1] {
+					t.Errorf("%s: gap %d mismatch: expected [%d, %d], got [%d, %d]",
+						tt.description, i, exp[0], exp[1], gaps[i][0], gaps[i][1])
+				}
+			}
+		})
+	}
+}
+
+func TestIncrementalFetchIntegration(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "prometheus_incremental_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	s := NewPrometheusStorage(tmpDir)
+	clusterID := "test_cluster"
+	metricName := "test_metric"
+
+	data1 := map[string]interface{}{
+		"data": map[string]interface{}{
+			"result": []interface{}{
+				map[string]interface{}{
+					"metric": map[string]interface{}{
+						"__name__": metricName,
+						"instance": "localhost:9090",
+					},
+					"values": []interface{}{
+						[]interface{}{1640000000.0, "1.0"},
+						[]interface{}{1640000015.0, "2.0"},
+						[]interface{}{1640000030.0, "3.0"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = s.SaveMetricData(clusterID, metricName, data1, 1640000000, 1640000100)
+	if err != nil {
+		t.Fatalf("failed to save first data: %v", err)
+	}
+
+	existingRanges, err := s.GetExistingTimeRanges(clusterID, metricName)
+	if err != nil {
+		t.Fatalf("failed to get existing ranges: %v", err)
+	}
+	if len(existingRanges) != 1 {
+		t.Errorf("expected 1 existing range, got %d", len(existingRanges))
+	}
+
+	gaps := s.CalculateNonOverlappingRanges(1640000000, 1640000200, existingRanges)
+	if len(gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d: %v", len(gaps), gaps)
+	} else if gaps[0][0] != existingRanges[0].End || gaps[0][1] != 1640000200 {
+		t.Errorf("expected gap [%d, %d], got [%d, %d]", existingRanges[0].End, 1640000200, gaps[0][0], gaps[0][1])
+	}
+
+	data2 := map[string]interface{}{
+		"data": map[string]interface{}{
+			"result": []interface{}{
+				map[string]interface{}{
+					"metric": map[string]interface{}{
+						"__name__": metricName,
+						"instance": "localhost:9090",
+					},
+					"values": []interface{}{
+						[]interface{}{1640000045.0, "4.0"},
+						[]interface{}{1640000060.0, "5.0"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = s.SaveMetricData(clusterID, metricName, data2, 1640000045, 1640000200)
+	if err != nil {
+		t.Fatalf("failed to save second data: %v", err)
+	}
+
+	if err := s.MergeAdjacentFiles(clusterID, metricName); err != nil {
+		t.Fatalf("failed to merge adjacent files: %v", err)
+	}
+
+	files, err := s.ListMetricFiles(clusterID, metricName)
+	if err != nil {
+		t.Fatalf("failed to list files: %v", err)
+	}
+	if len(files) != 1 {
+		t.Errorf("expected 1 file after merge, got %d", len(files))
+	}
+
+	info, err := s.AnalyzeMetric(clusterID, metricName)
+	if err != nil {
+		t.Fatalf("failed to analyze metric: %v", err)
+	}
+	if len(info.Segments) != 1 {
+		t.Errorf("expected 1 segment after merge, got %d", len(info.Segments))
+	}
+
+	gapsAfterMerge := s.CalculateNonOverlappingRanges(1640000000, 1640000030, info.Segments)
+	if len(gapsAfterMerge) != 0 {
+		t.Errorf("expected no gaps for fully covered range [1640000000, 1640000030], got %d: %v", len(gapsAfterMerge), gapsAfterMerge)
+	}
+
+	gapsPartial := s.CalculateNonOverlappingRanges(1639999900, 1640000060, info.Segments)
+	if len(gapsPartial) != 1 {
+		t.Errorf("expected 1 gap for partially covered range, got %d: %v", len(gapsPartial), gapsPartial)
+	} else if gapsPartial[0][0] != 1639999900 {
+		t.Errorf("expected gap to start at 1639999900, got %d", gapsPartial[0][0])
+	}
+}
+
+func TestMergeThreshold(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "prometheus_merge_threshold_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name              string
+		file1Timestamps   [2]int64
+		file2Timestamps   [2]int64
+		expectedFileCount int
+	}{
+		{
+			name:              "adjacent files - should merge",
+			file1Timestamps:   [2]int64{1640000000, 1640000030},
+			file2Timestamps:   [2]int64{1640000030, 1640000060},
+			expectedFileCount: 1,
+		},
+		{
+			name:              "files with gap > threshold - should NOT merge",
+			file1Timestamps:   [2]int64{1640000000, 1640000030},
+			file2Timestamps:   [2]int64{1640000600, 1640000630},
+			expectedFileCount: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testDir := filepath.Join(tmpDir, tt.name)
+			testMetricDir := filepath.Join(testDir, "test_cluster", "test_metric")
+			if err := os.MkdirAll(testMetricDir, 0755); err != nil {
+				t.Fatalf("failed to create test dir: %v", err)
+			}
+
+			content1 := fmt.Sprintf("# TYPE test gauge\ntest{a=\"1\"} 1 %d000\ntest{a=\"1\"} 2 %d000\n",
+				tt.file1Timestamps[0], tt.file1Timestamps[1])
+			content2 := fmt.Sprintf("# TYPE test gauge\ntest{a=\"1\"} 3 %d000\ntest{a=\"1\"} 4 %d000\n",
+				tt.file2Timestamps[0], tt.file2Timestamps[1])
+
+			file1Name := fmt.Sprintf("%s_%s.prom",
+				time.Unix(tt.file1Timestamps[0], 0).Format("2006-01-02_15-04-05"),
+				time.Unix(tt.file1Timestamps[1], 0).Format("2006-01-02_15-04-05"))
+			file2Name := fmt.Sprintf("%s_%s.prom",
+				time.Unix(tt.file2Timestamps[0], 0).Format("2006-01-02_15-04-05"),
+				time.Unix(tt.file2Timestamps[1], 0).Format("2006-01-02_15-04-05"))
+
+			file1 := filepath.Join(testMetricDir, file1Name)
+			file2 := filepath.Join(testMetricDir, file2Name)
+
+			if err := os.WriteFile(file1, []byte(content1), 0644); err != nil {
+				t.Fatalf("failed to write file1: %v", err)
+			}
+			if err := os.WriteFile(file2, []byte(content2), 0644); err != nil {
+				t.Fatalf("failed to write file2: %v", err)
+			}
+
+			s := NewPrometheusStorage(testDir)
+			if err := s.MergeAdjacentFiles("test_cluster", "test_metric"); err != nil {
+				t.Fatalf("MergeAdjacentFiles failed: %v", err)
+			}
+
+			files, err := s.ListMetricFiles("test_cluster", "test_metric")
+			if err != nil {
+				t.Fatalf("ListMetricFiles failed: %v", err)
+			}
+
+			if len(files) != tt.expectedFileCount {
+				t.Errorf("expected %d files, got %d", tt.expectedFileCount, len(files))
+			}
+
+			os.RemoveAll(testDir)
+		})
 	}
 }

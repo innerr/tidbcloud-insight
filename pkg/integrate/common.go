@@ -72,7 +72,7 @@ func getClientParams(env *model.Env) ClientParams {
 	return ClientParams{
 		FetchTimeout: getEnvDuration(env, EnvKeyFetchTimeout, 5*time.Minute),
 		IdleTimeout:  getEnvDuration(env, EnvKeyIdleTimeout, 3*time.Minute),
-		DisplayVerb:  getEnvBool(env, EnvKeyDisplayVerb, true),
+		DisplayVerb:  getEnvBool(env, EnvKeyVerbose, true),
 	}
 }
 
