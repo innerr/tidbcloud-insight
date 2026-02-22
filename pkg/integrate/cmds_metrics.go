@@ -66,11 +66,12 @@ func MetricsFetchRandom(
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
-	_, err = impl.MetricsFetchRandomWithConfig(cacheDir, metaDir, clientParams, authMgr,
+	clusterID, _, err := impl.MetricsFetchRandomWithConfig(cacheDir, metaDir, clientParams, authMgr,
 		tr.StartUnix(), tr.EndUnix(), metricFilter, fetcherConfig)
 	if err != nil {
 		return currCmdIdx, err
 	}
+	env.Set(EnvKeyClusterID, clusterID)
 	fmt.Printf("  Time range: %s ~ %s (%s)\n", tr.Start.Format("2006-01-02 15:04:05"), tr.End.Format("2006-01-02 15:04:05"), tr.Duration().Round(time.Second))
 	return currCmdIdx, nil
 }
