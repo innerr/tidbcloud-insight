@@ -46,7 +46,26 @@ const (
 )
 
 func RegisterCmds(cmds *model.CmdTree) {
-	dig := cmds.AddSub("dig", "d").RegEmptyCmd("analyze cluster for anomalies and load characteristics").Owner()
+	dig := cmds.AddSub("dig", "d").RegPowerCmd(DigCmd,
+		"analyze cluster metrics for anomalies and load characteristics").
+		AddArg("cluster-id", "", "cluster", "id", "c").
+		AddArg2Env(EnvKeyClusterID, "cluster-id").
+		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
+		AddArg("json", "false", "j").
+		AddArg2Env(EnvKeyJSON, "json").
+		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead).
+		AddArg("start", "", "s").
+		AddArg2Env(EnvKeyTimeStart, "start").
+		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
+		AddArg("end", "", "e").
+		AddArg2Env(EnvKeyTimeEnd, "end").
+		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
+		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
+		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
+		AddArg("duration", "7d", "d").
+		AddArg2Env(EnvKeyTimeDuration, "duration").
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).Owner()
 
 	dig.AddSub("random", "r").RegPowerCmd(DigRandomCmd,
 		"analyze a random cluster").
@@ -77,27 +96,6 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg("concurrency", "1", "c").
 		AddArg2Env(EnvKeyConcurrency, "concurrency").
 		AddEnvOp(EnvKeyConcurrency, model.EnvOpTypeRead).
-		AddArg("start", "", "s").
-		AddArg2Env(EnvKeyTimeStart, "start").
-		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
-		AddArg("end", "", "e").
-		AddArg2Env(EnvKeyTimeEnd, "end").
-		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
-		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
-		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
-		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
-		AddArg("duration", "7d", "d").
-		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
-
-	dig.AddSub("local", "l").RegPowerCmd(DigLocalCmd,
-		"re-analyze cached data by id").
-		AddArg("cache-id", "", "id", "c").
-		AddArg2Env(EnvKeyCacheID, "cache-id").
-		AddEnvOp(EnvKeyCacheID, model.EnvOpTypeRead).
-		AddArg("json", "false", "j").
-		AddArg2Env(EnvKeyJSON, "json").
-		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -228,8 +226,8 @@ func RegisterHelp(tc *ticat.TiCat) {
 		"metrics.cache.list",
 		"metrics.cache.clear",
 		"metrics.cache.clear.all",
+		"dig",
 		"dig.random",
 		"dig.walk",
-		"dig.local",
 	)
 }
