@@ -84,6 +84,7 @@ func Dig(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Duration,
 type DigResult struct {
 	LoadProfile *analysis.LoadProfile      `json:"load_profile"`
 	Anomalies   []analysis.DetectedAnomaly `json:"anomalies"`
+	Summary     *analysis.MergeSummary     `json:"summary,omitempty"`
 }
 
 func loadMetricTimeSeries(storage *prometheus_storage.PrometheusStorage, clusterID, metricName string, startTS, endTS int64) ([]analysis.TimeSeriesPoint, error) {
@@ -291,21 +292,127 @@ func printTextResult(result *DigResult) {
 
 	if len(result.Anomalies) > 0 {
 		fmt.Println()
-		fmt.Println("============================================================")
 		fmt.Println("ANOMALY DETECTION RESULTS")
-		fmt.Println("============================================================")
-		fmt.Printf("\nDetected %d anomalies:\n\n", len(result.Anomalies))
+		fmt.Println("=========================")
+		fmt.Println()
 
-		for i, a := range result.Anomalies {
-			fmt.Printf("%d. [%s] %s\n", i+1, a.Severity, a.Type)
-			fmt.Printf("   Time: %s\n", a.TimeStr)
-			fmt.Printf("   Detail: %s\n", a.Detail)
+		for _, a := range result.Anomalies {
+			printAnomalyLine(a)
+		}
+
+		if result.Summary != nil {
 			fmt.Println()
+			printMergeSummary(*result.Summary)
 		}
 	} else {
 		fmt.Println()
 		fmt.Println("No significant anomalies detected.")
 	}
+}
+
+func printAnomalyLine(a analysis.DetectedAnomaly) {
+	severity := formatSeverityColored(a.Severity)
+	timeRange := formatTimeRange(a)
+	change := formatChange(a.Value, a.Baseline)
+	confBar := formatConfidenceBar(a.Confidence)
+	algos := strings.Join(a.DetectedBy, ",")
+
+	duration := ""
+	if a.Duration > 0 {
+		duration = " (" + formatAnomalyDuration(int(a.Duration)) + ")"
+	}
+
+	fmt.Printf("%-10s %s  %-25s %-12s %s %s%s\n",
+		severity, timeRange, a.Type, change, confBar, algos, duration)
+}
+
+func formatSeverityColored(s analysis.Severity) string {
+	switch s {
+	case analysis.SeverityCritical:
+		return "[CRITICAL]"
+	case analysis.SeverityHigh:
+		return "[HIGH]    "
+	case analysis.SeverityMedium:
+		return "[MEDIUM]  "
+	case analysis.SeverityLow:
+		return "[LOW]     "
+	default:
+		return "[????]    "
+	}
+}
+
+func formatTimeRange(a analysis.DetectedAnomaly) string {
+	t := time.Unix(a.Timestamp, 0)
+	timeStr := t.Format("15:04:05")
+
+	if a.EndTime > 0 && a.EndTime > a.Timestamp {
+		endStr := time.Unix(a.EndTime, 0).Format("15:04:05")
+		return timeStr + "~" + endStr
+	}
+	return timeStr + "         "
+}
+
+func formatChange(value, baseline float64) string {
+	if baseline == 0 {
+		return "N/A"
+	}
+
+	change := ((value - baseline) / baseline) * 100
+	if change >= 0 {
+		return fmt.Sprintf("+%.0f%%", change)
+	}
+	return fmt.Sprintf("%.0f%%", change)
+}
+
+func formatConfidenceBar(conf float64) string {
+	filled := int(conf * 5)
+	if filled > 5 {
+		filled = 5
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", 5-filled)
+	return fmt.Sprintf("│%s %2.0f%%│", bar, conf*100)
+}
+
+func formatAnomalyDuration(seconds int) string {
+	if seconds < 60 {
+		return "<1m"
+	}
+	minutes := seconds / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	if remainingMinutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, remainingMinutes)
+}
+
+func printMergeSummary(s analysis.MergeSummary) {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("%d events", s.TotalAnomalies))
+
+	if s.CriticalCount > 0 || s.HighCount > 0 {
+		var severityParts []string
+		if s.CriticalCount > 0 {
+			severityParts = append(severityParts, fmt.Sprintf("%d critical", s.CriticalCount))
+		}
+		if s.HighCount > 0 {
+			severityParts = append(severityParts, fmt.Sprintf("%d high", s.HighCount))
+		}
+		parts = append(parts, "("+strings.Join(severityParts, ", ")+")")
+	}
+
+	if len(s.AlgorithmsUsed) > 0 {
+		parts = append(parts, "| "+strings.Join(s.AlgorithmsUsed, ","))
+	}
+
+	if s.MergeWindowSec > 0 {
+		parts = append(parts, fmt.Sprintf("| %dm window", s.MergeWindowSec/60))
+	}
+
+	fmt.Printf("Summary: %s\n", strings.Join(parts, " "))
 }
 
 func DigRandom(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Duration,
