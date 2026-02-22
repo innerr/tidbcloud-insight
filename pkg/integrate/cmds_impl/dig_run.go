@@ -249,8 +249,11 @@ func loadMetricTimeSeries(storage *prometheus_storage.PrometheusStorage, cluster
 		return nil, fmt.Errorf("no data files found for metric %s", metricName)
 	}
 
-	dataByTs := make(map[int64]float64)
+	if isCounterMetric(metricName) {
+		return loadCounterMetricAsRate(files, startTS, endTS)
+	}
 
+	dataByTs := make(map[int64]float64)
 	for _, file := range files {
 		err := parsePromFileForTimeSeries(file, startTS, endTS, dataByTs)
 		if err != nil {
@@ -271,6 +274,178 @@ func loadMetricTimeSeries(storage *prometheus_storage.PrometheusStorage, cluster
 	})
 
 	return result, nil
+}
+
+func loadCounterMetricAsRate(files []string, startTS, endTS int64) ([]analysis.TimeSeriesPoint, error) {
+	dataByLabelAndTs := make(map[string]map[int64]float64)
+
+	for _, file := range files {
+		err := parsePromFileForCounterWithLabels(file, startTS, endTS, dataByLabelAndTs)
+		if err != nil {
+			continue
+		}
+	}
+
+	rateByTs := make(map[int64]float64)
+	for _, tsToVal := range dataByLabelAndTs {
+		rates := calculateRateFromMap(tsToVal)
+		for ts, rate := range rates {
+			rateByTs[ts] += rate
+		}
+	}
+
+	var result []analysis.TimeSeriesPoint
+	for ts, rate := range rateByTs {
+		result = append(result, analysis.TimeSeriesPoint{
+			Timestamp: ts,
+			Value:     rate,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Timestamp < result[j].Timestamp
+	})
+
+	return result, nil
+}
+
+func parsePromFileForCounterWithLabels(filePath string, startTS, endTS int64, dataByLabelAndTs map[string]map[int64]float64) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+
+		tsStr := parts[len(parts)-1]
+		valueStr := parts[len(parts)-2]
+
+		var ts int64
+		if _, err := fmt.Sscanf(tsStr, "%d", &ts); err != nil {
+			continue
+		}
+
+		if ts > 1e12 {
+			ts = ts / 1000
+		}
+
+		if ts < startTS || ts > endTS {
+			continue
+		}
+
+		value, err := strconv.ParseFloat(valueStr, 64)
+		if err != nil {
+			continue
+		}
+
+		labelHash := extractLabelHash(line)
+		if dataByLabelAndTs[labelHash] == nil {
+			dataByLabelAndTs[labelHash] = make(map[int64]float64)
+		}
+		dataByLabelAndTs[labelHash][ts] = value
+	}
+
+	return scanner.Err()
+}
+
+func extractLabelHash(line string) string {
+	start := strings.Index(line, "{")
+	end := strings.LastIndex(line, "}")
+	if start == -1 || end == -1 || end <= start {
+		return "default"
+	}
+	return line[start+1 : end]
+}
+
+func calculateRateFromMap(tsToVal map[int64]float64) map[int64]float64 {
+	if len(tsToVal) < 2 {
+		return nil
+	}
+
+	type tsVal struct {
+		ts int64
+		v  float64
+	}
+	var sorted []tsVal
+	for ts, v := range tsToVal {
+		sorted = append(sorted, tsVal{ts, v})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].ts < sorted[j].ts
+	})
+
+	result := make(map[int64]float64)
+	for i := 1; i < len(sorted); i++ {
+		tsDiff := sorted[i].ts - sorted[i-1].ts
+		if tsDiff <= 0 {
+			continue
+		}
+
+		valDiff := sorted[i].v - sorted[i-1].v
+		if valDiff < 0 {
+			valDiff = sorted[i].v
+		}
+
+		rate := valDiff / float64(tsDiff)
+		result[sorted[i].ts] = rate
+	}
+
+	return result
+}
+
+func isCounterMetric(metricName string) bool {
+	counterMetrics := []string{
+		"tidb_server_query_total",
+		"tidb_executor_statement_total",
+		"tikv_grpc_msg_duration_seconds_count",
+	}
+	for _, m := range counterMetrics {
+		if metricName == m {
+			return true
+		}
+	}
+	return false
+}
+
+func calculateRate(data []analysis.TimeSeriesPoint) []analysis.TimeSeriesPoint {
+	if len(data) < 2 {
+		return nil
+	}
+
+	var result []analysis.TimeSeriesPoint
+	for i := 1; i < len(data); i++ {
+		tsDiff := data[i].Timestamp - data[i-1].Timestamp
+		if tsDiff <= 0 {
+			continue
+		}
+
+		valDiff := data[i].Value - data[i-1].Value
+		if valDiff < 0 {
+			valDiff = data[i].Value
+		}
+
+		rate := valDiff / float64(tsDiff)
+		result = append(result, analysis.TimeSeriesPoint{
+			Timestamp: data[i].Timestamp,
+			Value:     rate,
+		})
+	}
+
+	return result
 }
 
 func loadMetricHistogramP99(storage *prometheus_storage.PrometheusStorage, clusterID, metricName string, startTS, endTS int64) ([]analysis.TimeSeriesPoint, error) {
