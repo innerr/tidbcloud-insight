@@ -18,6 +18,27 @@ import (
 
 const GSEndpoint = "http://www.gs.us-west-2.aws.observability.tidbcloud.com/api/v1/clusters/"
 
+type TooManySamplesError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *TooManySamplesError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Body)
+}
+
+func isTooManySamplesError(err error) bool {
+	if err == nil {
+		return false
+	}
+	_, ok := err.(*TooManySamplesError)
+	return ok
+}
+
+func containsMaxSamplesError(body string) bool {
+	return len(body) > 0 && (contains(body, "maxSamplesPerQuery") || contains(body, "cannot select more than"))
+}
+
 type Cluster struct {
 	ApplicationID   string `json:"applicationID"`
 	ID              string `json:"id"`
@@ -50,15 +71,17 @@ type ClustersResponse struct {
 }
 
 type Client struct {
-	cache         *cache.Cache
-	rateLimiter   *RateLimiter
-	concurrency   *AdaptiveConcurrencyController
-	bytesReceived int64
-	bytesMu       sync.RWMutex
-	httpClient    *http.Client
-	idleTimeout   time.Duration
-	displayVerb   bool
-	authMgr       *auth.Manager
+	cache                 *cache.Cache
+	rateLimiter           *RateLimiter
+	concurrency           *AdaptiveConcurrencyController
+	bytesReceived         int64
+	bytesMu               sync.RWMutex
+	httpClient            *http.Client
+	idleTimeout           time.Duration
+	displayVerb           bool
+	authMgr               *auth.Manager
+	lastChunkSizeReduce   time.Time
+	lastChunkSizeReduceMu sync.Mutex
 }
 
 func NewClientWithAuth(cacheDir string, fetchTimeout, idleTimeout time.Duration, displayVerb bool, authMgr *auth.Manager) (*Client, error) {
@@ -285,9 +308,13 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		bodyStr := string(body)
 		c.rateLimiter.RecordFailure(resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode))
-		logger.Errorf("%s -> HTTP %d: %s", req.URL.Path, resp.StatusCode, string(body))
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		logger.Errorf("%s -> HTTP %d: %s", req.URL.Path, resp.StatusCode, bodyStr)
+		if resp.StatusCode == 422 && containsMaxSamplesError(bodyStr) {
+			return nil, &TooManySamplesError{StatusCode: resp.StatusCode, Body: bodyStr}
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	if c.displayVerb {
@@ -605,141 +632,89 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, dsURL, metric
 		chunkSize = 1800
 	}
 
-	var chunks [][2]int
-	chunkStart := start
-	for chunkStart < end {
-		chunkEnd := chunkStart + chunkSize
-		if chunkEnd > end {
-			chunkEnd = end
-		}
-		chunks = append(chunks, [2]int{chunkStart, chunkEnd})
-		chunkStart = chunkEnd
+	minChunkSize := 300
+
+	type pendingChunk struct {
+		start, end int
 	}
 
-	if len(chunks) == 0 {
-		return nil, fmt.Errorf("no time range to query")
-	}
-
-	if len(chunks) == 1 {
-		result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, start, end, step)
-		if err != nil {
-			return nil, err
-		}
-		if writer != nil {
-			if err := writeResultToWriter(result, writer); err != nil {
-				return nil, err
-			}
-		}
-		dataSize := estimateDataSize(result)
-		byteSize := estimateByteSize(result)
-		return &ChunkedMetricResult{Result: result, DataSize: dataSize, ByteSize: byteSize}, nil
-	}
-
-	maxConcurrency := 3
-	if c.concurrency != nil {
-		maxConcurrency = c.concurrency.GetCurrentConcurrency()
-	}
-
-	type chunkResult struct {
-		idx    int
-		result map[string]interface{}
-		err    error
-	}
-
-	resultChan := make(chan chunkResult, maxConcurrency)
-	sem := make(chan struct{}, maxConcurrency)
-
-	go func() {
-		var wg sync.WaitGroup
-		for i, chunk := range chunks {
-			select {
-			case <-ctx.Done():
-				resultChan <- chunkResult{idx: i, err: ctx.Err()}
-				continue
-			case sem <- struct{}{}:
-			}
-
-			wg.Add(1)
-			go func(idx, chunkStart, chunkEnd int) {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, chunkStart, chunkEnd, step)
-				select {
-				case resultChan <- chunkResult{idx: idx, result: result, err: err}:
-				case <-ctx.Done():
-				}
-			}(i, chunk[0], chunk[1])
-		}
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	allResults := make([]map[string]interface{}, len(chunks))
-	received := 0
-	failed := 0
-
-	progressTicker := time.NewTicker(30 * time.Second)
-	defer progressTicker.Stop()
-
-	var merged map[string]interface{}
+	pending := []pendingChunk{{start: start, end: end}}
 	var totalDataSize int
 	var totalByteSize int64
+	received := 0
+	failed := 0
+	currentChunkSize := chunkSize
 
-	for {
-		select {
-		case r, ok := <-resultChan:
-			if !ok {
-				if writer != nil {
-					_ = writer.Close()
-				}
-				if received == 0 {
-					return nil, fmt.Errorf("all chunks failed for metric %s", metric)
-				}
-				if writer == nil {
-					var validResults []map[string]interface{}
-					for _, res := range allResults {
-						if res != nil {
-							validResults = append(validResults, res)
+	for len(pending) > 0 {
+		pc := pending[0]
+		pending = pending[1:]
+
+		adjustedEnd := pc.start + currentChunkSize
+		if adjustedEnd > pc.end {
+			adjustedEnd = pc.end
+		}
+
+		result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, pc.start, adjustedEnd, step)
+		if err != nil {
+			if isTooManySamplesError(err) {
+				if currentChunkSize > minChunkSize {
+					c.lastChunkSizeReduceMu.Lock()
+					canReduce := time.Since(c.lastChunkSizeReduce) >= 2*time.Minute
+					if canReduce {
+						newChunkSize := currentChunkSize / 2
+						if newChunkSize < minChunkSize {
+							newChunkSize = minChunkSize
 						}
+						logger.Warnf("Chunk too large for %s [%d-%d], reducing chunk size from %d to %d",
+							metric, pc.start, adjustedEnd, currentChunkSize, newChunkSize)
+						currentChunkSize = newChunkSize
+						c.lastChunkSizeReduce = time.Now()
+					} else {
+						logger.Warnf("Chunk too large for %s [%d-%d], splitting chunk (rate limited reduction)",
+							metric, pc.start, adjustedEnd)
 					}
-					merged = mergeChunkedResults(validResults)
-				}
-				if merged != nil {
-					totalDataSize = estimateDataSize(merged)
-					totalByteSize = estimateByteSize(merged)
-				}
-				return &ChunkedMetricResult{Result: merged, DataSize: totalDataSize, ByteSize: totalByteSize}, nil
-			}
+					c.lastChunkSizeReduceMu.Unlock()
 
-			if r.err != nil {
-				failed++
-			} else if r.result != nil {
-				if writer != nil {
-					if err := writeResultToWriter(r.result, writer); err != nil {
-						return nil, err
+					mid := pc.start + (pc.end-pc.start)/2
+					if mid > pc.start {
+						pending = append([]pendingChunk{{start: pc.start, end: mid}}, pending...)
 					}
-					totalDataSize += estimateDataSize(r.result)
-					totalByteSize += estimateByteSize(r.result)
-				} else {
-					allResults[r.idx] = r.result
+					if pc.end > mid {
+						pending = append([]pendingChunk{{start: mid, end: pc.end}}, pending...)
+					}
+					continue
 				}
-				received++
+				logger.Errorf("Chunk size already at minimum for %s [%d-%d], giving up", metric, pc.start, adjustedEnd)
 			}
+			failed++
+			continue
+		}
 
-		case <-progressTicker.C:
-			pending := len(chunks) - received - failed
-			if pending > 0 {
-				logger.Infof("Metric %s: %d/%d chunks done, %d failed, %d pending", metric, received, len(chunks), failed, pending)
-			}
-
-		case <-ctx.Done():
+		received++
+		if result != nil {
 			if writer != nil {
-				_ = writer.Close()
+				if err := writeResultToWriter(result, writer); err != nil {
+					return nil, err
+				}
+				totalDataSize += estimateDataSize(result)
+				totalByteSize += estimateByteSize(result)
 			}
-			return nil, ctx.Err()
+		}
+
+		if adjustedEnd < pc.end {
+			pending = append([]pendingChunk{{start: adjustedEnd, end: pc.end}}, pending...)
 		}
 	}
+
+	if writer != nil {
+		_ = writer.Close()
+	}
+
+	if received == 0 {
+		return nil, fmt.Errorf("all chunks failed for metric %s", metric)
+	}
+
+	return &ChunkedMetricResult{DataSize: totalDataSize, ByteSize: totalByteSize}, nil
 }
 
 func writeResultToWriter(result map[string]interface{}, writer MetricWriter) error {

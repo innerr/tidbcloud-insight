@@ -278,10 +278,15 @@ func (r *RateLimiter) RecordFailure(statusCode int, err error) {
 	defer r.mu.Unlock()
 
 	r.failedRequests++
-	r.consecutiveFails++
 
 	isRateLimit := statusCode == 429 || statusCode == 503
-	shouldBackoff := isRateLimit || r.consecutiveFails >= r.consecutiveFailThreshold
+	isPermanentError := statusCode == 403 || statusCode == 401 || statusCode == 404 || statusCode == 422
+
+	if !isPermanentError {
+		r.consecutiveFails++
+	}
+
+	shouldBackoff := isRateLimit || (!isPermanentError && r.consecutiveFails >= r.consecutiveFailThreshold)
 
 	if shouldBackoff {
 		interval, ok := r.backoffRetry.NextInterval()
