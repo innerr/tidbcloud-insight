@@ -123,17 +123,20 @@ func NewMetricsFetcher(c *client.Client, storage *prometheus_storage.PrometheusS
 }
 
 type FetchTask struct {
-	Metric    string
-	Gap       [2]int64
-	DSURL     string
+	ID        string
 	ClusterID string
+	Metric    string
+	GapStart  int64
+	GapEnd    int64
+	DSURL     string
 	Step      int
+	ChunkSize int
 }
 
 func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, metrics []string, startTS, endTS int64, step int) (*FetchResult, error) {
 	result := &FetchResult{}
 
-	var tasks []FetchTask
+	var tasks []*FetchTask
 
 	for _, metric := range metrics {
 		existingRanges, err := f.storage.GetExistingTimeRanges(clusterID, metric)
@@ -149,12 +152,17 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 		}
 
 		for _, gap := range gaps {
-			tasks = append(tasks, FetchTask{
+			gapDuration := gap[1] - gap[0]
+			chunkDuration := f.chunkSizer.EstimateChunkDuration(gapDuration)
+
+			tasks = append(tasks, &FetchTask{
 				Metric:    metric,
-				Gap:       gap,
+				GapStart:  gap[0],
+				GapEnd:    gap[1],
 				DSURL:     dsURL,
 				ClusterID: clusterID,
 				Step:      step,
+				ChunkSize: chunkDuration,
 			})
 		}
 	}
@@ -163,45 +171,25 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 		return result, nil
 	}
 
-	sem := make(chan struct{}, f.config.MaxConcurrency)
-	for i := 0; i < f.config.MaxConcurrency; i++ {
-		sem <- struct{}{}
+	handler := func(ctx context.Context, task *FetchTask) *TaskResult {
+		return f.executeTask(ctx, task)
 	}
 
-	var wg sync.WaitGroup
+	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler)
+	queue.SubmitBatch(tasks)
+
+	results := queue.Wait()
+
 	var mu sync.Mutex
-
-	for _, task := range tasks {
-		wg.Add(1)
-
-		go func(t FetchTask) {
-			defer wg.Done()
-
-			select {
-			case <-sem:
-			case <-ctx.Done():
-				mu.Lock()
-				result.Errors = append(result.Errors, fmt.Errorf("%s: context cancelled", t.Metric))
-				mu.Unlock()
-				return
-			}
-			defer func() { sem <- struct{}{} }()
-
-			err := f.fetchGap(ctx, t)
-			if err != nil {
-				mu.Lock()
-				result.Errors = append(result.Errors, fmt.Errorf("%s [%d-%d]: %w", t.Metric, t.Gap[0], t.Gap[1], err))
-				mu.Unlock()
-				return
-			}
-
-			mu.Lock()
+	for _, r := range results {
+		mu.Lock()
+		if r.Success {
 			result.FetchedMetrics++
-			mu.Unlock()
-		}(task)
+		} else if r.Error != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("%s [%d-%d]: %w", r.Task.Metric, r.Task.GapStart, r.Task.GapEnd, r.Error))
+		}
+		mu.Unlock()
 	}
-
-	wg.Wait()
 
 	if len(result.Errors) > 0 && result.FetchedMetrics == 0 {
 		return result, fmt.Errorf("all fetch tasks failed")
@@ -218,36 +206,101 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 	return result, nil
 }
 
-func (f *MetricsFetcher) fetchGap(ctx context.Context, task FetchTask) error {
-	gapDuration := task.Gap[1] - task.Gap[0]
-	chunkDuration := f.chunkSizer.EstimateChunkDuration(gapDuration)
-
-	writer, err := f.storage.NewMetricWriter(task.ClusterID, task.Metric, task.Gap[0], task.Gap[1])
+func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *TaskResult {
+	writer, err := f.storage.NewMetricWriter(task.ClusterID, task.Metric, task.GapStart, task.GapEnd)
 	if err != nil {
-		return fmt.Errorf("failed to create writer: %w", err)
+		return &TaskResult{
+			Task:    task,
+			Success: false,
+			Error:   fmt.Errorf("failed to create writer: %w", err),
+		}
 	}
 
-	_, err = f.client.QueryMetricChunkedWithWriter(
+	res, err := f.client.QueryMetricChunkedWithWriter(
 		ctx,
 		task.DSURL,
 		task.Metric,
-		int(task.Gap[0]),
-		int(task.Gap[1]),
+		int(task.GapStart),
+		int(task.GapEnd),
 		task.Step,
-		chunkDuration,
+		task.ChunkSize,
 		writer,
 	)
 
 	if err != nil {
 		writer.Close()
-		return err
+
+		if res != nil && res.TooManySamples {
+			return &TaskResult{
+				Task:       task,
+				Success:    false,
+				Error:      err,
+				NeedSplit:  true,
+				FailedSize: res.FailedSize,
+			}
+		}
+
+		if isFatalError(err) {
+			return &TaskResult{
+				Task:         task,
+				Success:      false,
+				Error:        err,
+				AbortCluster: true,
+			}
+		}
+
+		return &TaskResult{
+			Task:    task,
+			Success: false,
+			Error:   err,
+		}
 	}
 
 	if closeErr := writer.Close(); closeErr != nil {
-		return fmt.Errorf("failed to close writer: %w", closeErr)
+		return &TaskResult{
+			Task:    task,
+			Success: false,
+			Error:   fmt.Errorf("failed to close writer: %w", closeErr),
+		}
 	}
 
-	return nil
+	return &TaskResult{
+		Task:    task,
+		Success: true,
+	}
+}
+
+func (f *MetricsFetcher) fetchGap(ctx context.Context, task FetchTask) error {
+	gapDuration := task.GapEnd - task.GapStart
+	chunkDuration := f.chunkSizer.EstimateChunkDuration(gapDuration)
+	task.ChunkSize = chunkDuration
+
+	result := f.executeTask(ctx, &task)
+	if result.Success {
+		return nil
+	}
+	return result.Error
+}
+
+func isFatalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return contains(errStr, "403") || contains(errStr, "401") || contains(errStr, "unauthorized") || contains(errStr, "forbidden")
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *MetricsFetcher) calculateStep(durationSeconds int64) int {
@@ -297,7 +350,8 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 		for _, gap := range gaps {
 			tasks = append(tasks, FetchTask{
 				Metric:    metric,
-				Gap:       gap,
+				GapStart:  gap[0],
+				GapEnd:    gap[1],
 				DSURL:     dsURL,
 				ClusterID: clusterID,
 				Step:      step,
@@ -329,8 +383,8 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 			if progressChan != nil {
 				progressChan <- MetricFetchProgress{
 					Metric:   t.Metric,
-					GapStart: t.Gap[0],
-					GapEnd:   t.Gap[1],
+					GapStart: t.GapStart,
+					GapEnd:   t.GapEnd,
 					Status:   "started",
 				}
 			}
@@ -344,8 +398,8 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 				if progressChan != nil {
 					progressChan <- MetricFetchProgress{
 						Metric:   t.Metric,
-						GapStart: t.Gap[0],
-						GapEnd:   t.Gap[1],
+						GapStart: t.GapStart,
+						GapEnd:   t.GapEnd,
 						Status:   "cancelled",
 					}
 				}
@@ -356,13 +410,13 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 			err := f.fetchGap(ctx, t)
 			if err != nil {
 				mu.Lock()
-				result.Errors = append(result.Errors, fmt.Errorf("%s [%d-%d]: %w", t.Metric, t.Gap[0], t.Gap[1], err))
+				result.Errors = append(result.Errors, fmt.Errorf("%s [%d-%d]: %w", t.Metric, t.GapStart, t.GapEnd, err))
 				mu.Unlock()
 				if progressChan != nil {
 					progressChan <- MetricFetchProgress{
 						Metric:   t.Metric,
-						GapStart: t.Gap[0],
-						GapEnd:   t.Gap[1],
+						GapStart: t.GapStart,
+						GapEnd:   t.GapEnd,
 						Status:   "error",
 						Error:    err,
 					}
@@ -377,8 +431,8 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 			if progressChan != nil {
 				progressChan <- MetricFetchProgress{
 					Metric:   t.Metric,
-					GapStart: t.Gap[0],
-					GapEnd:   t.Gap[1],
+					GapStart: t.GapStart,
+					GapEnd:   t.GapEnd,
 					Status:   "completed",
 				}
 			}

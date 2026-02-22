@@ -71,17 +71,15 @@ type ClustersResponse struct {
 }
 
 type Client struct {
-	cache                 *cache.Cache
-	rateLimiter           *RateLimiter
-	concurrency           *AdaptiveConcurrencyController
-	bytesReceived         int64
-	bytesMu               sync.RWMutex
-	httpClient            *http.Client
-	idleTimeout           time.Duration
-	displayVerb           bool
-	authMgr               *auth.Manager
-	lastChunkSizeReduce   time.Time
-	lastChunkSizeReduceMu sync.Mutex
+	cache         *cache.Cache
+	rateLimiter   *RateLimiter
+	concurrency   *AdaptiveConcurrencyController
+	bytesReceived int64
+	bytesMu       sync.RWMutex
+	httpClient    *http.Client
+	idleTimeout   time.Duration
+	displayVerb   bool
+	authMgr       *auth.Manager
 }
 
 func NewClientWithAuth(cacheDir string, fetchTimeout, idleTimeout time.Duration, displayVerb bool, authMgr *auth.Manager) (*Client, error) {
@@ -618,9 +616,11 @@ type MetricWriter interface {
 }
 
 type ChunkedMetricResult struct {
-	Result   map[string]interface{}
-	DataSize int
-	ByteSize int64
+	Result         map[string]interface{}
+	DataSize       int
+	ByteSize       int64
+	TooManySamples bool
+	FailedSize     int
 }
 
 func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
@@ -632,86 +632,39 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, dsURL, metric
 		chunkSize = 1800
 	}
 
-	minChunkSize := 300
-
-	type pendingChunk struct {
-		start, end int
+	adjustedEnd := start + chunkSize
+	if adjustedEnd > end {
+		adjustedEnd = end
 	}
 
-	pending := []pendingChunk{{start: start, end: end}}
+	result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, start, adjustedEnd, step)
+	if err != nil {
+		if isTooManySamplesError(err) {
+			return &ChunkedMetricResult{
+				TooManySamples: true,
+				FailedSize:     chunkSize,
+			}, err
+		}
+		return nil, err
+	}
+
 	var totalDataSize int
 	var totalByteSize int64
-	received := 0
-	failed := 0
-	currentChunkSize := chunkSize
 
-	for len(pending) > 0 {
-		pc := pending[0]
-		pending = pending[1:]
-
-		adjustedEnd := pc.start + currentChunkSize
-		if adjustedEnd > pc.end {
-			adjustedEnd = pc.end
+	if result != nil && writer != nil {
+		if err := writeResultToWriter(result, writer); err != nil {
+			return nil, err
 		}
-
-		result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, pc.start, adjustedEnd, step)
-		if err != nil {
-			if isTooManySamplesError(err) {
-				if currentChunkSize > minChunkSize {
-					c.lastChunkSizeReduceMu.Lock()
-					canReduce := time.Since(c.lastChunkSizeReduce) >= 2*time.Minute
-					if canReduce {
-						newChunkSize := currentChunkSize / 2
-						if newChunkSize < minChunkSize {
-							newChunkSize = minChunkSize
-						}
-						logger.Warnf("Chunk too large for %s [%d-%d], reducing chunk size from %d to %d",
-							metric, pc.start, adjustedEnd, currentChunkSize, newChunkSize)
-						currentChunkSize = newChunkSize
-						c.lastChunkSizeReduce = time.Now()
-					} else {
-						logger.Warnf("Chunk too large for %s [%d-%d], splitting chunk (rate limited reduction)",
-							metric, pc.start, adjustedEnd)
-					}
-					c.lastChunkSizeReduceMu.Unlock()
-
-					mid := pc.start + (pc.end-pc.start)/2
-					if mid > pc.start {
-						pending = append([]pendingChunk{{start: pc.start, end: mid}}, pending...)
-					}
-					if pc.end > mid {
-						pending = append([]pendingChunk{{start: mid, end: pc.end}}, pending...)
-					}
-					continue
-				}
-				logger.Errorf("Chunk size already at minimum for %s [%d-%d], giving up", metric, pc.start, adjustedEnd)
-			}
-			failed++
-			continue
-		}
-
-		received++
-		if result != nil {
-			if writer != nil {
-				if err := writeResultToWriter(result, writer); err != nil {
-					return nil, err
-				}
-				totalDataSize += estimateDataSize(result)
-				totalByteSize += estimateByteSize(result)
-			}
-		}
-
-		if adjustedEnd < pc.end {
-			pending = append([]pendingChunk{{start: adjustedEnd, end: pc.end}}, pending...)
-		}
+		totalDataSize += estimateDataSize(result)
+		totalByteSize += estimateByteSize(result)
 	}
 
-	if writer != nil {
-		_ = writer.Close()
-	}
-
-	if received == 0 {
-		return nil, fmt.Errorf("all chunks failed for metric %s", metric)
+	if adjustedEnd < end {
+		remaining, _ := c.QueryMetricChunkedWithWriter(ctx, dsURL, metric, adjustedEnd, end, step, chunkSize, writer)
+		if remaining != nil {
+			totalDataSize += remaining.DataSize
+			totalByteSize += remaining.ByteSize
+		}
 	}
 
 	return &ChunkedMetricResult{DataSize: totalDataSize, ByteSize: totalByteSize}, nil
