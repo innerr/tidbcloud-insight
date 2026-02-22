@@ -15,6 +15,7 @@ import (
 type MetricsFetcherConfig struct {
 	TargetChunkSizeMB int
 	MaxConcurrency    int
+	Step              int
 }
 
 type FetchResult struct {
@@ -93,9 +94,17 @@ type MetricsFetcher struct {
 }
 
 func NewMetricsFetcherConfigFromEnv(env *model.Env) MetricsFetcherConfig {
+	step := 120
+	stepStr := env.GetRaw(EnvKeyMetricsFetchStep)
+	if stepStr != "" {
+		if duration, err := time.ParseDuration(stepStr); err == nil {
+			step = int(duration.Seconds())
+		}
+	}
 	return MetricsFetcherConfig{
 		TargetChunkSizeMB: env.GetInt(EnvKeyTargetChunkSizeMB),
 		MaxConcurrency:    env.GetInt(EnvKeyRateLimitDesiredConcurrency),
+		Step:              step,
 	}
 }
 
@@ -242,12 +251,8 @@ func (f *MetricsFetcher) fetchGap(ctx context.Context, task FetchTask) error {
 }
 
 func (f *MetricsFetcher) calculateStep(durationSeconds int64) int {
-	if durationSeconds <= 3600 {
-		return 15
-	} else if durationSeconds <= 86400 {
-		return 30
-	} else if durationSeconds <= 86400*3 {
-		return 60
+	if f.config.Step > 0 {
+		return f.config.Step
 	}
 	return 120
 }

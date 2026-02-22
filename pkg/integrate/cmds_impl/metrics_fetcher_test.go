@@ -319,29 +319,29 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestMetricsFetcher_CalculateStep(t *testing.T) {
-	fetcher := &MetricsFetcher{
-		storage:    nil,
-		config:     MetricsFetcherConfig{TargetChunkSizeMB: 1, MaxConcurrency: 3},
-		chunkSizer: NewAdaptiveChunkSizer(1024 * 1024),
-	}
-
 	tests := []struct {
-		duration int64
-		expected int
+		name         string
+		configStep   int
+		expectedStep int
 	}{
-		{1800, 15},
-		{3600, 15},
-		{7200, 30},
-		{86400, 30},
-		{172800, 60},
-		{345600, 120},
+		{"default step", 0, 120},
+		{"custom step 30", 30, 30},
+		{"custom step 60", 60, 60},
+		{"custom step 300", 300, 300},
 	}
 
 	for _, tt := range tests {
-		result := fetcher.calculateStep(tt.duration)
-		if result != tt.expected {
-			t.Errorf("calculateStep(%d) = %d, want %d", tt.duration, result, tt.expected)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			fetcher := &MetricsFetcher{
+				storage:    nil,
+				config:     MetricsFetcherConfig{TargetChunkSizeMB: 1, MaxConcurrency: 3, Step: tt.configStep},
+				chunkSizer: NewAdaptiveChunkSizer(1024 * 1024),
+			}
+			result := fetcher.calculateStep(3600)
+			if result != tt.expectedStep {
+				t.Errorf("calculateStep() = %d, want %d", result, tt.expectedStep)
+			}
+		})
 	}
 }
 
