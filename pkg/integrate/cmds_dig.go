@@ -51,6 +51,7 @@ func DigRandomCmd(
 	metaDir := getMetaDir(env)
 	maxBackoff := getMaxBackoff(env)
 	clientParams := getClientParams(env)
+	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
@@ -61,11 +62,8 @@ func DigRandomCmd(
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
-	err = impl.DigRandom(cacheDir, metaDir, clientParams, maxBackoff, authMgr,
-		tr.StartUnix(), tr.EndUnix(),
-		env.GetRaw(EnvKeyBizType),
-		false,
-		env.GetBool(EnvKeyLocal))
+	err = impl.DigRandom(cacheDir, metaDir, clientParams, maxBackoff, authMgr, fetcherConfig,
+		tr.StartUnix(), tr.EndUnix(), false)
 	return currCmdIdx, err
 }
 
@@ -80,6 +78,7 @@ func DigWalkCmd(
 	metaDir := getMetaDir(env)
 	maxBackoff := getMaxBackoff(env)
 	clientParams := getClientParams(env)
+	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
@@ -90,8 +89,7 @@ func DigWalkCmd(
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
-	impl.DigWalk(cacheDir, metaDir, clientParams, maxBackoff, authMgr,
-		tr.StartUnix(), tr.EndUnix(),
-		env.GetInt(EnvKeyConcurrency))
-	return currCmdIdx, nil
+	err = impl.DigWalk(cacheDir, metaDir, clientParams, maxBackoff, authMgr, fetcherConfig,
+		tr.StartUnix(), tr.EndUnix())
+	return currCmdIdx, err
 }

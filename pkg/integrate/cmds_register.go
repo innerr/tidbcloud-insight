@@ -34,7 +34,6 @@ const (
 	EnvKeyTimeDuration         = EnvPrefix + "time.duration"
 
 	EnvKeyBizType              = EnvPrefix + "biz.type"
-	EnvKeyJSON                 = EnvPrefix + "output.json"
 	EnvKeyLocal                = EnvPrefix + "local"
 	EnvKeyCacheID              = EnvPrefix + "cache.id"
 	EnvKeyConcurrency          = EnvPrefix + "dig.concurrency"
@@ -51,9 +50,6 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg("cluster-id", "", "cluster", "id", "c").
 		AddArg2Env(EnvKeyClusterID, "cluster-id").
 		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
-		AddArg("json", "false", "j").
-		AddArg2Env(EnvKeyJSON, "json").
-		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -69,15 +65,6 @@ func RegisterCmds(cmds *model.CmdTree) {
 
 	dig.AddSub("random", "r").RegPowerCmd(DigRandomCmd,
 		"analyze a random cluster").
-		AddArg("biz-type", "", "biz", "b").
-		AddArg2Env(EnvKeyBizType, "biz-type").
-		AddEnvOp(EnvKeyBizType, model.EnvOpTypeRead).
-		AddArg("json", "false", "j").
-		AddArg2Env(EnvKeyJSON, "json").
-		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead).
-		AddArg("local", "false", "l").
-		AddArg2Env(EnvKeyLocal, "local").
-		AddEnvOp(EnvKeyLocal, model.EnvOpTypeRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -93,9 +80,6 @@ func RegisterCmds(cmds *model.CmdTree) {
 
 	dig.AddSub("walk", "w").RegPowerCmd(DigWalkCmd,
 		"analyze all clusters sequentially").
-		AddArg("concurrency", "1", "c").
-		AddArg2Env(EnvKeyConcurrency, "concurrency").
-		AddEnvOp(EnvKeyConcurrency, model.EnvOpTypeRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
