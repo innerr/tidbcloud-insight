@@ -166,7 +166,7 @@ func parsePromFileForTimeSeries(filePath string, startTS, endTS int64, dataByTs 
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 1024*1024)
@@ -215,7 +215,7 @@ func parsePromFileForHistogram(filePath string, startTS, endTS int64, dataByTs m
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 1024*1024)
@@ -309,15 +309,88 @@ func printTextResult(result *DigResult) {
 }
 
 func DigRandom(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Duration,
-	authMgr *AuthManager, startTS, endTS int64, bizType string, jsonOutput, local bool) error {
+	authMgr *AuthManager, config MetricsFetcherConfig,
+	startTS, endTS int64, jsonOutput bool) error {
 
-	return fmt.Errorf("DigRandom not implemented yet")
+	metricsDir := filepath.Join(cacheDir, "metrics")
+
+	entries, err := os.ReadDir(metricsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no cached metrics found, please fetch metrics first")
+		}
+		return fmt.Errorf("failed to read metrics cache: %w", err)
+	}
+
+	var cachedClusters []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			clusterDir := filepath.Join(metricsDir, entry.Name())
+			metricEntries, err := os.ReadDir(clusterDir)
+			if err != nil {
+				continue
+			}
+			if len(metricEntries) > 0 {
+				cachedClusters = append(cachedClusters, entry.Name())
+			}
+		}
+	}
+
+	if len(cachedClusters) == 0 {
+		return fmt.Errorf("no cached clusters found, please fetch metrics first")
+	}
+
+	randSeed := time.Now().UnixNano()
+	selectedIdx := randSeed % int64(len(cachedClusters))
+	selectedClusterID := cachedClusters[selectedIdx]
+
+	fmt.Printf("Random cluster from cache: %s\n\n", selectedClusterID)
+
+	return Dig(cacheDir, metaDir, cp, maxBackoff, authMgr, config,
+		selectedClusterID, startTS, endTS, jsonOutput)
 }
 
 func DigWalk(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Duration,
-	authMgr *AuthManager, startTS, endTS int64, concurrency int) {
+	authMgr *AuthManager, config MetricsFetcherConfig,
+	startTS, endTS int64) error {
 
-	fmt.Println("DigWalk not implemented yet")
+	inactive := loadInactiveClusters(cacheDir)
+	if len(inactive) > 0 {
+		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
+	}
+
+	var allClusters []clusterInfo
+	for _, bizType := range []string{"dedicated", "premium"} {
+		clusters, err := loadClustersFromList(metaDir, bizType)
+		if err != nil {
+			continue
+		}
+		for _, c := range clusters {
+			if !inactive[c.clusterID] {
+				allClusters = append(allClusters, c)
+			}
+		}
+	}
+
+	if len(allClusters) == 0 {
+		return fmt.Errorf("no active clusters found")
+	}
+
+	fmt.Printf("Walking through %d clusters\n\n", len(allClusters))
+
+	for i, c := range allClusters {
+		fmt.Printf("[%d/%d] Processing cluster %s (%s)\n", i+1, len(allClusters), c.clusterID, c.bizType)
+
+		err := Dig(cacheDir, metaDir, cp, maxBackoff, authMgr, config,
+			c.clusterID, startTS, endTS, false)
+		if err != nil {
+			fmt.Printf("Error processing cluster %s: %v\n", c.clusterID, err)
+		}
+		fmt.Println("\n------------------------------------------------------------")
+	}
+
+	fmt.Println("Walk completed")
+	return nil
 }
 
 func DigLocal(cacheDir string, startTS, endTS int64, cacheID string, jsonOutput bool) {
