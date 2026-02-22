@@ -44,11 +44,10 @@ type AdaptiveConcurrencyConfig struct {
 }
 
 func DefaultAdaptiveConcurrencyConfig() AdaptiveConcurrencyConfig {
-	
+
 	desired := 3
 	recoveryInterval := 30 * time.Second
 	minRecoveryInterval := 10 * time.Second
-
 
 	return AdaptiveConcurrencyConfig{
 		DesiredConcurrency:  desired,

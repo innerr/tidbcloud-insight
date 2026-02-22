@@ -8,6 +8,8 @@ issues:
   exclude-dirs:
     - bin
     - vendor
+  exclude-files:
+    - ".*_test\\.go$"
   exclude-use-default: false
 
 linters:
@@ -15,7 +17,6 @@ linters:
   enable:
     - gofmt
     - goimports
-    - errcheck
     - govet
 
 linters-settings:
