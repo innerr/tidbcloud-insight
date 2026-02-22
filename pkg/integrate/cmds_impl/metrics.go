@@ -411,8 +411,9 @@ func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMg
 		} else {
 			successCount++
 		}
+		fmt.Println("------------------------------------------------------------")
 	}
 
-	fmt.Printf("\nCompleted: %d success, %d failed\n", successCount, failCount)
+	fmt.Printf("Completed: %d success, %d failed\n", successCount, failCount)
 	return nil
 }
