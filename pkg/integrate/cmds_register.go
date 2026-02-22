@@ -45,8 +45,10 @@ const (
 )
 
 func RegisterCmds(cmds *model.CmdTree) {
-	dig := cmds.AddSub("dig", "d").RegPowerCmd(DigCmd,
-		"analyze cluster metrics for anomalies and load characteristics").
+	dig := cmds.AddSub("dig", "d").RegEmptyCmd("dig operations").Owner()
+
+	dig.AddSub("profile", "profiling", "prof", "p").RegPowerCmd(DigProfileCmd,
+		"analyze cluster load profile and characteristics").
 		AddArg("cluster-id", "", "cluster", "id", "c").
 		AddArg2Env(EnvKeyClusterID, "cluster-id").
 		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
@@ -61,10 +63,13 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).Owner()
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
 
-	dig.AddSub("random", "r").RegPowerCmd(DigRandomCmd,
-		"analyze a random cluster").
+	dig.AddSub("abnormal", "a").RegPowerCmd(DigAbnormalCmd,
+		"detect anomalies using all detection algorithms").
+		AddArg("cluster-id", "", "cluster", "id", "c").
+		AddArg2Env(EnvKeyClusterID, "cluster-id").
+		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -78,8 +83,57 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg2Env(EnvKeyTimeDuration, "duration").
 		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
 
-	dig.AddSub("walk", "w").RegPowerCmd(DigWalkCmd,
-		"analyze all clusters sequentially").
+	digRandom := dig.AddSub("random", "r").RegEmptyCmd("random cluster operations").Owner()
+
+	digRandom.AddSub("profile", "profiling", "prof", "p").RegPowerCmd(DigRandomProfileCmd,
+		"analyze load profile for a random cluster").
+		AddArg("start", "", "s").
+		AddArg2Env(EnvKeyTimeStart, "start").
+		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
+		AddArg("end", "", "e").
+		AddArg2Env(EnvKeyTimeEnd, "end").
+		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
+		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
+		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
+		AddArg("duration", "7d", "d").
+		AddArg2Env(EnvKeyTimeDuration, "duration").
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
+
+	digRandom.AddSub("abnormal", "a").RegPowerCmd(DigRandomAbnormalCmd,
+		"detect anomalies for a random cluster").
+		AddArg("start", "", "s").
+		AddArg2Env(EnvKeyTimeStart, "start").
+		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
+		AddArg("end", "", "e").
+		AddArg2Env(EnvKeyTimeEnd, "end").
+		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
+		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
+		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
+		AddArg("duration", "7d", "d").
+		AddArg2Env(EnvKeyTimeDuration, "duration").
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
+
+	digWalk := dig.AddSub("walk", "w").RegEmptyCmd("walk through all clusters").Owner()
+
+	digWalk.AddSub("profile", "profiling", "prof", "p").RegPowerCmd(DigWalkProfileCmd,
+		"analyze load profile for all clusters sequentially").
+		AddArg("start", "", "s").
+		AddArg2Env(EnvKeyTimeStart, "start").
+		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
+		AddArg("end", "", "e").
+		AddArg2Env(EnvKeyTimeEnd, "end").
+		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
+		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
+		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
+		AddArg("duration", "7d", "d").
+		AddArg2Env(EnvKeyTimeDuration, "duration").
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
+
+	digWalk.AddSub("abnormal", "a").RegPowerCmd(DigWalkAbnormalCmd,
+		"detect anomalies for all clusters sequentially").
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -219,8 +273,11 @@ func RegisterHelp(tc *ticat.TiCat) {
 		"metrics.cache.list",
 		"metrics.cache.clear",
 		"metrics.cache.clear.all",
-		"dig",
-		"dig.random",
-		"dig.walk",
+		"dig.profile",
+		"dig.abnormal",
+		"dig.random.profile",
+		"dig.random.abnormal",
+		"dig.walk.profile",
+		"dig.walk.abnormal",
 	)
 }
