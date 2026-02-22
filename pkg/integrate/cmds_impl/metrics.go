@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"tidbcloud-insight/pkg/prometheus_storage"
@@ -179,8 +178,8 @@ func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 	return nil
 }
 
-func MetricsFetch(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
-	clusterID string, startTS, endTS int64, metricFilter string) (int, error) {
+func MetricsFetchWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
+	clusterID string, startTS, endTS int64, metricFilter string, config MetricsFetcherConfig) (int, error) {
 
 	cl, err := NewClient(cacheDir, cp, authMgr)
 	if err != nil {
@@ -201,122 +200,59 @@ func MetricsFetch(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManage
 
 	fmt.Printf("  Fetching from %s/%s (%s)...\n", clusterInfo.vendor, clusterInfo.region, clusterInfo.bizType)
 
-	durationSeconds := endTS - startTS
-	var step int
-	if durationSeconds <= 3600 {
-		step = 15
-	} else if durationSeconds <= 86400 {
-		step = 30
-	} else if durationSeconds <= 86400*3 {
-		step = 60
-	} else {
-		step = 120
-	}
-
 	promStorage := prometheus_storage.NewPrometheusStorage(filepath.Join(cacheDir, "metrics"))
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	errors := make([]error, 0)
-	fetchedCount := 0
-	skippedCount := 0
 
 	metricsToFetch := digMetrics
 	if metricFilter != "" {
 		metricsToFetch = []string{metricFilter}
 	}
 
+	fetcher := NewMetricsFetcher(cl, promStorage, config)
+
+	durationSeconds := endTS - startTS
+	step := fetcher.calculateStep(durationSeconds)
+
+	result, err := fetcher.Fetch(ctx, clusterID, dsURL, metricsToFetch, startTS, endTS, step)
+	if err != nil {
+		return 0, err
+	}
+
 	for _, m := range metricsToFetch {
-		wg.Add(1)
-		go func(metric string) {
-			defer wg.Done()
+		existingRanges, _ := promStorage.GetExistingTimeRanges(clusterID, m)
+		gaps := promStorage.CalculateNonOverlappingRanges(startTS, endTS, existingRanges)
 
-			existingRanges, err := promStorage.GetExistingTimeRanges(clusterID, metric)
-			if err != nil {
-				existingRanges = nil
-			}
-
-			gaps := promStorage.CalculateNonOverlappingRanges(startTS, endTS, existingRanges)
-
-			if len(gaps) == 0 {
-				mu.Lock()
-				skippedCount++
-				fmt.Printf("    %s: already cached\n", metric)
-				mu.Unlock()
-				return
-			}
-
+		if len(gaps) == 0 {
+			fmt.Printf("    %s: already cached\n", m)
+		} else if len(gaps) == 1 {
+			fmt.Printf("    - %s: fetched range\n      [%s ~ %s]\n", m,
+				time.Unix(gaps[0][0], 0).Format("2006-01-02 15:04:05"),
+				time.Unix(gaps[0][1], 0).Format("2006-01-02 15:04:05"))
+		} else {
+			fmt.Printf("    - %s: fetched %d gaps\n", m, len(gaps))
 			for _, gap := range gaps {
-				gapStart := gap[0]
-				gapEnd := gap[1]
-
-				result, err := cl.QueryMetric(ctx, dsURL, metric, int(gapStart), int(gapEnd), step)
-				if err != nil {
-					mu.Lock()
-					errors = append(errors, fmt.Errorf("%s: %w", metric, err))
-					mu.Unlock()
-					return
-				}
-
-				if result == nil {
-					mu.Lock()
-					errors = append(errors, fmt.Errorf("%s: no data", metric))
-					mu.Unlock()
-					return
-				}
-
-				_, err = promStorage.SaveMetricData(clusterID, metric, result, gapStart, gapEnd)
-				if err != nil {
-					mu.Lock()
-					errors = append(errors, fmt.Errorf("%s: save failed: %w", metric, err))
-					mu.Unlock()
-					return
-				}
+				fmt.Printf("      [%s ~ %s]\n",
+					time.Unix(gap[0], 0).Format("2006-01-02 15:04:05"),
+					time.Unix(gap[1], 0).Format("2006-01-02 15:04:05"))
 			}
-
-			if err := promStorage.MergeAdjacentFiles(clusterID, metric); err != nil {
-				mu.Lock()
-				errors = append(errors, fmt.Errorf("%s: merge failed: %w", metric, err))
-				mu.Unlock()
-				return
-			}
-
-			mu.Lock()
-			fetchedCount++
-			if len(gaps) == 1 {
-				fmt.Printf("    - %s: fetched range\n      [%s ~ %s]\n", metric,
-					time.Unix(gaps[0][0], 0).Format("2006-01-02 15:04:05"),
-					time.Unix(gaps[0][1], 0).Format("2006-01-02 15:04:05"))
-			} else {
-				fmt.Printf("    - %s: fetched %d gaps\n", metric, len(gaps))
-				for _, gap := range gaps {
-					fmt.Printf("      [%s ~ %s]\n",
-						time.Unix(gap[0], 0).Format("2006-01-02 15:04:05"),
-						time.Unix(gap[1], 0).Format("2006-01-02 15:04:05"))
-				}
-			}
-			mu.Unlock()
-		}(m)
+		}
 	}
 
-	wg.Wait()
-
-	if len(errors) > 0 {
-		return 0, fmt.Errorf("errors: %v", errors)
+	if result.SkippedMetrics > 0 {
+		fmt.Printf("  Skipped %d metrics (already cached)\n", result.SkippedMetrics)
+	}
+	if result.FetchedMetrics > 0 {
+		fmt.Printf("  Fetched %d metrics\n", result.FetchedMetrics)
 	}
 
-	if skippedCount > 0 {
-		fmt.Printf("  Skipped %d metrics (already cached)\n", skippedCount)
-	}
-	if fetchedCount > 0 {
-		fmt.Printf("  Fetched %d metrics\n", fetchedCount)
+	if len(result.Errors) > 0 {
+		fmt.Printf("  Errors: %v\n", result.Errors)
 	}
 
-	return fetchedCount, nil
+	return result.FetchedMetrics, nil
 }
 
-func MetricsFetchRandom(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
-	startTS, endTS int64, metricFilter string) (int, error) {
+func MetricsFetchRandomWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
+	startTS, endTS int64, metricFilter string, config MetricsFetcherConfig) (int, error) {
 
 	inactive := loadInactiveClusters(cacheDir)
 
@@ -342,7 +278,7 @@ func MetricsFetchRandom(cacheDir, metaDir string, cp ClientParams, authMgr *Auth
 
 	fmt.Printf("Random cluster: %s (%s)\n", selected.clusterID, selected.bizType)
 
-	return MetricsFetch(cacheDir, metaDir, cp, authMgr, selected.clusterID, startTS, endTS, metricFilter)
+	return MetricsFetchWithConfig(cacheDir, metaDir, cp, authMgr, selected.clusterID, startTS, endTS, metricFilter, config)
 }
 
 func findClusterInfo(metaDir, clusterID string) (*clusterInfo, error) {
@@ -430,8 +366,8 @@ func loadClustersFromList(metaDir, bizType string) ([]clusterInfo, error) {
 	return clusters, scanner.Err()
 }
 
-func MetricsFetchAll(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
-	startTS, endTS int64) error {
+func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
+	startTS, endTS int64, config MetricsFetcherConfig) error {
 
 	inactive := loadInactiveClusters(cacheDir)
 	if len(inactive) > 0 {
@@ -468,7 +404,7 @@ func MetricsFetchAll(cacheDir, metaDir string, cp ClientParams, authMgr *AuthMan
 	for i, c := range allClusters {
 		fmt.Printf("[%d/%d] Fetching %s (%s)...\n", i+1, len(allClusters), c.clusterID, c.bizType)
 
-		_, err := MetricsFetch(cacheDir, metaDir, cp, authMgr, c.clusterID, startTS, endTS, "")
+		_, err := MetricsFetchWithConfig(cacheDir, metaDir, cp, authMgr, c.clusterID, startTS, endTS, "", config)
 		if err != nil {
 			fmt.Printf("  ERROR: %v\n", err)
 			failCount++
