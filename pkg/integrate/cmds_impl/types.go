@@ -7,6 +7,13 @@ import (
 	"tidbcloud-insight/pkg/client"
 )
 
+const (
+	EnvPrefix = "tidbcloud-insight."
+
+	EnvKeyTargetChunkSizeMB           = EnvPrefix + "fetch.target-chunk-size-mb"
+	EnvKeyRateLimitDesiredConcurrency = EnvPrefix + "rate-limit.desired-concurrency"
+)
+
 type AuthManager = auth.Manager
 
 type ClientParams struct {

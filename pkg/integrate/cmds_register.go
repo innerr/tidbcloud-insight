@@ -3,6 +3,8 @@ package integrate
 import (
 	"github.com/innerr/ticat/pkg/core/model"
 	"github.com/innerr/ticat/pkg/ticat"
+
+	impl "tidbcloud-insight/pkg/integrate/cmds_impl"
 )
 
 const (
@@ -19,14 +21,12 @@ const (
 	EnvKeyAuthTokenURL     = EnvPrefix + "auth.token-url"
 	EnvKeyAuthAudience     = EnvPrefix + "auth.audience"
 
-	EnvKeyRateLimitMaxBackoff         = EnvPrefix + "rate-limit.max-backoff"
-	EnvKeyRateLimitDesiredConcurrency = EnvPrefix + "rate-limit.desired-concurrency"
-	EnvKeyRateLimitRecoveryInterval   = EnvPrefix + "rate-limit.recovery-interval"
-	EnvKeyRateLimitMinRecovery        = EnvPrefix + "rate-limit.min-recovery-interval"
+	EnvKeyRateLimitMaxBackoff       = EnvPrefix + "rate-limit.max-backoff"
+	EnvKeyRateLimitRecoveryInterval = EnvPrefix + "rate-limit.recovery-interval"
+	EnvKeyRateLimitMinRecovery      = EnvPrefix + "rate-limit.min-recovery-interval"
 
-	EnvKeyFetchTimeout    = EnvPrefix + "fetch.timeout"
-	EnvKeyIdleTimeout     = EnvPrefix + "fetch.idle-timeout"
-	EnvKeyTargetChunkSize = EnvPrefix + "fetch.target-chunk-size"
+	EnvKeyFetchTimeout = EnvPrefix + "fetch.timeout"
+	EnvKeyIdleTimeout  = EnvPrefix + "fetch.idle-timeout"
 
 	EnvKeyTimeStart            = EnvPrefix + "time.start"
 	EnvKeyTimeEnd              = EnvPrefix + "time.end"
@@ -156,7 +156,9 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).Owner()
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).
+		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).Owner()
 
 	metricsFetch.AddSub("random", "r").RegPowerCmd(MetricsFetchRandom,
 		"fetch metrics from a random cluster").
@@ -174,7 +176,9 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
 		AddArg("duration", "1h", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeRead)
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead)
 
 	metricsFetch.AddSub("all", "a").RegPowerCmd(MetricsFetchAll,
 		"fetch metrics from all clusters (excluding inactive)").
@@ -189,7 +193,9 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeRead)
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead)
 
 	metricsCache := metrics.AddSub("cache", "ca").RegEmptyCmd("metrics cache operations").Owner()
 	metricsCache.AddSub("list", "l", "ls").RegPowerCmd(MetricsCacheListCmd,

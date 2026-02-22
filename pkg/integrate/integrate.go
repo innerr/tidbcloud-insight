@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	impl "tidbcloud-insight/pkg/integrate/cmds_impl"
 	"tidbcloud-insight/pkg/logger"
 
 	"github.com/innerr/ticat/pkg/core/model"
@@ -31,13 +32,14 @@ func Integrate(tc *ticat.TiCat) error {
 	defEnv.SetBool("display.meow", false)
 	defEnv.SetBool("display.color", true)
 	defEnv.SetBool(EnvKeyVerbose, true)
+	defEnv.SetInt(impl.EnvKeyTargetChunkSizeMB, 8)
 
 	defEnv.Set(EnvKeyCacheDir, "./cache")
 	defEnv.Set(EnvKeyMetaDir, "./meta")
 	defEnv.Set(EnvKeyFetchTimeout, "5m")
 	defEnv.Set(EnvKeyIdleTimeout, "1m")
 	defEnv.Set(EnvKeyRateLimitMaxBackoff, "5m")
-	defEnv.SetInt(EnvKeyRateLimitDesiredConcurrency, 3)
+	defEnv.SetInt(impl.EnvKeyRateLimitDesiredConcurrency, 5)
 	defEnv.Set(EnvKeyRateLimitRecoveryInterval, "30s")
 	defEnv.Set(EnvKeyRateLimitMinRecovery, "10s")
 

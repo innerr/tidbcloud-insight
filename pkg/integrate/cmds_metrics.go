@@ -19,6 +19,7 @@ func MetricsFetchCmd(
 	cacheDir := getCacheDir(env)
 	metaDir := getMetaDir(env)
 	clientParams := getClientParams(env)
+	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
@@ -32,8 +33,8 @@ func MetricsFetchCmd(
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
-	fetchedCount, err := impl.MetricsFetch(cacheDir, metaDir, clientParams, authMgr,
-		clusterID, tr.StartUnix(), tr.EndUnix(), metricFilter)
+	fetchedCount, err := impl.MetricsFetchWithConfig(cacheDir, metaDir, clientParams, authMgr,
+		clusterID, tr.StartUnix(), tr.EndUnix(), metricFilter, fetcherConfig)
 	if err != nil {
 		return currCmdIdx, err
 	}
@@ -52,6 +53,7 @@ func MetricsFetchRandom(
 	cacheDir := getCacheDir(env)
 	metaDir := getMetaDir(env)
 	clientParams := getClientParams(env)
+	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
@@ -64,8 +66,8 @@ func MetricsFetchRandom(
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
-	_, err = impl.MetricsFetchRandom(cacheDir, metaDir, clientParams, authMgr,
-		tr.StartUnix(), tr.EndUnix(), metricFilter)
+	_, err = impl.MetricsFetchRandomWithConfig(cacheDir, metaDir, clientParams, authMgr,
+		tr.StartUnix(), tr.EndUnix(), metricFilter, fetcherConfig)
 	if err != nil {
 		return currCmdIdx, err
 	}
@@ -83,6 +85,7 @@ func MetricsFetchAll(
 	cacheDir := getCacheDir(env)
 	metaDir := getMetaDir(env)
 	clientParams := getClientParams(env)
+	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
@@ -93,8 +96,8 @@ func MetricsFetchAll(
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
-	err = impl.MetricsFetchAll(cacheDir, metaDir, clientParams, authMgr,
-		tr.StartUnix(), tr.EndUnix())
+	err = impl.MetricsFetchAllWithConfig(cacheDir, metaDir, clientParams, authMgr,
+		tr.StartUnix(), tr.EndUnix(), fetcherConfig)
 	return currCmdIdx, err
 }
 
