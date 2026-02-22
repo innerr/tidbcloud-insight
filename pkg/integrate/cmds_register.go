@@ -139,6 +139,9 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
 		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).
+		AddArg("metrics-fetch-step", "2m", "step").
+		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step").
+		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).Owner()
 
@@ -159,6 +162,9 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg("duration", "1h", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
 		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeRead).
+		AddArg("metrics-fetch-step", "2m", "step").
+		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step").
+		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead)
 
@@ -176,6 +182,9 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
 		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeRead).
+		AddArg("metrics-fetch-step", "2m", "step").
+		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step").
+		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead)
 

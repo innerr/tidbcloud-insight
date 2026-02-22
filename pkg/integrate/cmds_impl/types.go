@@ -11,6 +11,7 @@ const (
 	EnvPrefix = "tidbcloud-insight."
 
 	EnvKeyTargetChunkSizeMB           = EnvPrefix + "fetch.target-chunk-size-mb"
+	EnvKeyMetricsFetchStep            = EnvPrefix + "metrics-fetch-step"
 	EnvKeyRateLimitDesiredConcurrency = EnvPrefix + "rate-limit.desired-concurrency"
 )
 
