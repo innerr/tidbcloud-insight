@@ -220,7 +220,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step").
 		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
-		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead)
+		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
+		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeWrite)
 
 	metricsFetch.AddSub("all", "a").RegPowerCmd(MetricsFetchAll,
 		"fetch metrics from all clusters (excluding inactive)").
