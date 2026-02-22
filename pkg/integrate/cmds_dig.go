@@ -8,6 +8,38 @@ import (
 	"github.com/innerr/ticat/pkg/core/model"
 )
 
+func DigCmd(
+	argv model.ArgVals,
+	cc *model.Cli,
+	env *model.Env,
+	flow *model.ParsedCmds,
+	currCmdIdx int) (int, error) {
+
+	cacheDir := getCacheDir(env)
+	metaDir := getMetaDir(env)
+	maxBackoff := getMaxBackoff(env)
+	clientParams := getClientParams(env)
+	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
+
+	tr, err := getTimeRangeFromEnv(env)
+	if err != nil {
+		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
+	}
+
+	clusterID := env.GetRaw(EnvKeyClusterID)
+	if clusterID == "" {
+		return currCmdIdx, fmt.Errorf("cluster-id is required")
+	}
+
+	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authMgr.StartBackgroundRefresh()
+	defer authMgr.Stop()
+
+	err = impl.Dig(cacheDir, metaDir, clientParams, maxBackoff, authMgr, fetcherConfig,
+		clusterID, tr.StartUnix(), tr.EndUnix(), false)
+	return currCmdIdx, err
+}
+
 func DigRandomCmd(
 	argv model.ArgVals,
 	cc *model.Cli,
@@ -32,7 +64,7 @@ func DigRandomCmd(
 	err = impl.DigRandom(cacheDir, metaDir, clientParams, maxBackoff, authMgr,
 		tr.StartUnix(), tr.EndUnix(),
 		env.GetRaw(EnvKeyBizType),
-		env.GetBool(EnvKeyJSON),
+		false,
 		env.GetBool(EnvKeyLocal))
 	return currCmdIdx, err
 }
@@ -61,25 +93,5 @@ func DigWalkCmd(
 	impl.DigWalk(cacheDir, metaDir, clientParams, maxBackoff, authMgr,
 		tr.StartUnix(), tr.EndUnix(),
 		env.GetInt(EnvKeyConcurrency))
-	return currCmdIdx, nil
-}
-
-func DigLocalCmd(
-	argv model.ArgVals,
-	cc *model.Cli,
-	env *model.Env,
-	flow *model.ParsedCmds,
-	currCmdIdx int) (int, error) {
-
-	cacheDir := getCacheDir(env)
-
-	tr, err := getTimeRangeFromEnv(env)
-	if err != nil {
-		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
-	}
-
-	impl.DigLocal(cacheDir, tr.StartUnix(), tr.EndUnix(),
-		env.GetRaw(EnvKeyCacheID),
-		env.GetBool(EnvKeyJSON))
 	return currCmdIdx, nil
 }
