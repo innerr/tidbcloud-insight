@@ -10,14 +10,16 @@ import (
 type AnomalyType string
 
 const (
-	AnomalyQPSDrop           AnomalyType = "QPS_DROP"
-	AnomalyQPSSpike          AnomalyType = "QPS_SPIKE"
-	AnomalyLatencySpike      AnomalyType = "LATENCY_SPIKE"
-	AnomalyLatencyDegraded   AnomalyType = "LATENCY_DEGRADED"
-	AnomalyInstanceImbalance AnomalyType = "INSTANCE_IMBALANCE"
-	AnomalySustainedLowQPS   AnomalyType = "SUSTAINED_LOW_QPS"
-	AnomalySustainedHighQPS  AnomalyType = "SUSTAINED_HIGH_QPS"
-	AnomalyVolatilitySpike   AnomalyType = "VOLATILITY_SPIKE"
+	AnomalyQPSDrop                  AnomalyType = "QPS_DROP"
+	AnomalyQPSSpike                 AnomalyType = "QPS_SPIKE"
+	AnomalyLatencySpike             AnomalyType = "LATENCY_SPIKE"
+	AnomalyLatencyDegraded          AnomalyType = "LATENCY_DEGRADED"
+	AnomalyInstanceImbalance        AnomalyType = "INSTANCE_IMBALANCE"
+	AnomalyInstanceLoadImbalance    AnomalyType = "INSTANCE_LOAD_IMBALANCE"
+	AnomalyInstanceLatencyImbalance AnomalyType = "INSTANCE_LATENCY_IMBALANCE"
+	AnomalySustainedLowQPS          AnomalyType = "SUSTAINED_LOW_QPS"
+	AnomalySustainedHighQPS         AnomalyType = "SUSTAINED_HIGH_QPS"
+	AnomalyVolatilitySpike          AnomalyType = "VOLATILITY_SPIKE"
 )
 
 type Severity string
@@ -30,17 +32,19 @@ const (
 )
 
 type DetectedAnomaly struct {
-	Type      AnomalyType `json:"type"`
-	Severity  Severity    `json:"severity"`
-	Timestamp int64       `json:"timestamp"`
-	TimeStr   string      `json:"time"`
-	Value     float64     `json:"value"`
-	Baseline  float64     `json:"baseline"`
-	ZScore    float64     `json:"z_score,omitempty"`
-	Detail    string      `json:"detail"`
-	Instance  string      `json:"instance,omitempty"`
-	Duration  int         `json:"duration,omitempty"`
-	EndTime   int64       `json:"end_timestamp,omitempty"`
+	Type       AnomalyType `json:"type"`
+	Severity   Severity    `json:"severity"`
+	Timestamp  int64       `json:"timestamp"`
+	TimeStr    string      `json:"time"`
+	Value      float64     `json:"value"`
+	Baseline   float64     `json:"baseline"`
+	ZScore     float64     `json:"z_score,omitempty"`
+	Detail     string      `json:"detail"`
+	Instance   string      `json:"instance,omitempty"`
+	Duration   int         `json:"duration,omitempty"`
+	EndTime    int64       `json:"end_timestamp,omitempty"`
+	Confidence float64     `json:"confidence"`
+	DetectedBy []string    `json:"detected_by"`
 }
 
 type AnomalyConfig struct {
@@ -708,8 +712,13 @@ func detectCategoryImbalance(instData map[string][]TimeSeriesPoint, component, c
 			}
 		}
 
+		anomalyType := AnomalyInstanceLoadImbalance
+		if isLatency {
+			anomalyType = AnomalyInstanceLatencyImbalance
+		}
+
 		anomalies = append(anomalies, DetectedAnomaly{
-			Type:     AnomalyInstanceImbalance,
+			Type:     anomalyType,
 			Severity: severity,
 			Instance: inst,
 			Value:    m,
@@ -777,7 +786,7 @@ func detectLatencyImbalance(latencyByInst map[string][]TimeSeriesPoint, componen
 		}
 
 		anomalies = append(anomalies, DetectedAnomaly{
-			Type:     AnomalyInstanceImbalance,
+			Type:     AnomalyInstanceLatencyImbalance,
 			Severity: severity,
 			Instance: inst,
 			Value:    m * 1000,
