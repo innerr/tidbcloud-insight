@@ -252,7 +252,7 @@ func MetricsFetchWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *
 }
 
 func MetricsFetchRandomWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
-	startTS, endTS int64, metricFilter string, config MetricsFetcherConfig) (int, error) {
+	startTS, endTS int64, metricFilter string, config MetricsFetcherConfig) (string, int, error) {
 
 	inactive := loadInactiveClusters(cacheDir)
 
@@ -270,7 +270,7 @@ func MetricsFetchRandomWithConfig(cacheDir, metaDir string, cp ClientParams, aut
 	}
 
 	if len(allClusters) == 0 {
-		return 0, fmt.Errorf("no active clusters found")
+		return "", 0, fmt.Errorf("no active clusters found")
 	}
 
 	rand.Seed(time.Now().UnixNano())
@@ -278,7 +278,8 @@ func MetricsFetchRandomWithConfig(cacheDir, metaDir string, cp ClientParams, aut
 
 	fmt.Printf("Random cluster: %s (%s)\n", selected.clusterID, selected.bizType)
 
-	return MetricsFetchWithConfig(cacheDir, metaDir, cp, authMgr, selected.clusterID, startTS, endTS, metricFilter, config)
+	fetchedCount, err := MetricsFetchWithConfig(cacheDir, metaDir, cp, authMgr, selected.clusterID, startTS, endTS, metricFilter, config)
+	return selected.clusterID, fetchedCount, err
 }
 
 func findClusterInfo(metaDir, clusterID string) (*clusterInfo, error) {
