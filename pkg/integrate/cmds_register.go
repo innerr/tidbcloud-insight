@@ -13,7 +13,6 @@ const (
 	EnvKeyMetaDir         = EnvPrefix + "meta.dir"
 	EnvKeyVerbose         = EnvPrefix + "log.verbose"
 	EnvKeyLogAllHTTPCodes = EnvPrefix + "log.all-http-codes"
-	EnvKeyDisplayVerb     = EnvPrefix + "display.verb"
 
 	EnvKeyAuthClientID     = EnvPrefix + "auth.client-id"
 	EnvKeyAuthClientSecret = EnvPrefix + "auth.client-secret"
@@ -51,18 +50,6 @@ func RegisterCmds(cmds *model.CmdTree) {
 
 	dig.AddSub("random", "r").RegPowerCmd(DigRandomCmd,
 		"analyze a random cluster").
-		AddArg("start", "", "s").
-		AddArg2Env(EnvKeyTimeStart, "start").
-		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
-		AddArg("end", "", "e").
-		AddArg2Env(EnvKeyTimeEnd, "end").
-		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
-		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
-		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
-		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
-		AddArg("duration", "7d", "d").
-		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).
 		AddArg("biz-type", "", "biz", "b").
 		AddArg2Env(EnvKeyBizType, "biz-type").
 		AddEnvOp(EnvKeyBizType, model.EnvOpTypeRead).
@@ -71,10 +58,25 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead).
 		AddArg("local", "false", "l").
 		AddArg2Env(EnvKeyLocal, "local").
-		AddEnvOp(EnvKeyLocal, model.EnvOpTypeRead)
+		AddEnvOp(EnvKeyLocal, model.EnvOpTypeRead).
+		AddArg("start", "", "s").
+		AddArg2Env(EnvKeyTimeStart, "start").
+		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
+		AddArg("end", "", "e").
+		AddArg2Env(EnvKeyTimeEnd, "end").
+		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
+		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
+		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
+		AddArg("duration", "7d", "d").
+		AddArg2Env(EnvKeyTimeDuration, "duration").
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
 
 	dig.AddSub("walk", "w").RegPowerCmd(DigWalkCmd,
 		"analyze all clusters sequentially").
+		AddArg("concurrency", "1", "c").
+		AddArg2Env(EnvKeyConcurrency, "concurrency").
+		AddEnvOp(EnvKeyConcurrency, model.EnvOpTypeRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -86,31 +88,28 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).
-		AddArg("concurrency", "1", "c").
-		AddArg2Env(EnvKeyConcurrency, "concurrency").
-		AddEnvOp(EnvKeyConcurrency, model.EnvOpTypeRead)
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
 
 	dig.AddSub("local", "l").RegPowerCmd(DigLocalCmd,
 		"re-analyze cached data by id").
-		AddArg("start", "", "s").
-		AddArg2Env(EnvKeyTimeStart, "start").
-		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
-		AddArg("end", "", "e").
-		AddArg2Env(EnvKeyTimeEnd, "end").
-		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
-		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
-		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
-		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
-		AddArg("duration", "7d", "d").
-		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).
 		AddArg("cache-id", "", "id", "c").
 		AddArg2Env(EnvKeyCacheID, "cache-id").
 		AddEnvOp(EnvKeyCacheID, model.EnvOpTypeRead).
 		AddArg("json", "false", "j").
 		AddArg2Env(EnvKeyJSON, "json").
-		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead)
+		AddEnvOp(EnvKeyJSON, model.EnvOpTypeRead).
+		AddArg("start", "", "s").
+		AddArg2Env(EnvKeyTimeStart, "start").
+		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
+		AddArg("end", "", "e").
+		AddArg2Env(EnvKeyTimeEnd, "end").
+		AddEnvOp(EnvKeyTimeEnd, model.EnvOpTypeMayRead).
+		AddArg("duration-ago-as-end", "", "ago-as-end", "aae", "a").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "duration-ago-as-end").
+		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
+		AddArg("duration", "7d", "d").
+		AddArg2Env(EnvKeyTimeDuration, "duration").
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
 
 	clusters := cmds.AddSub("clusters", "cluster", "c").RegEmptyCmd("cluster operations").Owner()
 
@@ -138,8 +137,14 @@ func RegisterCmds(cmds *model.CmdTree) {
 
 	metrics := cmds.AddSub("metrics", "m").RegEmptyCmd("metrics operations").Owner()
 
-	metrics.AddSub("fetch", "f").RegPowerCmd(MetricsFetchCmd,
+	metricsFetch := metrics.AddSub("fetch", "f").RegPowerCmd(MetricsFetchCmd,
 		"fetch dig metrics from cluster and save to cache").
+		AddArg("cluster-id", "", "cluster", "id").
+		AddArg2Env(EnvKeyClusterID, "cluster-id").
+		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
+		AddArg("metric", "", "m").
+		AddArg2Env(EnvKeyMetrics, "metric").
+		AddEnvOp(EnvKeyMetrics, model.EnvOpTypeMayRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -151,14 +156,13 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDurationAgoAsEnd, model.EnvOpTypeMayRead).
 		AddArg("duration", "7d", "d").
 		AddArg2Env(EnvKeyTimeDuration, "duration").
-		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).
-		AddArg("cluster-id", "", "cluster", "id").
-		AddArg2Env(EnvKeyClusterID, "cluster-id").
-		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).Owner()
+		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead).Owner()
 
-	metricsFetch := metrics.AddSub("fetch", "f").RegEmptyCmd("").Owner()
 	metricsFetch.AddSub("random", "r").RegPowerCmd(MetricsFetchRandom,
 		"fetch metrics from a random cluster").
+		AddArg("metric", "", "m").
+		AddArg2Env(EnvKeyMetrics, "metric").
+		AddEnvOp(EnvKeyMetrics, model.EnvOpTypeMayRead).
 		AddArg("start", "", "s").
 		AddArg2Env(EnvKeyTimeStart, "start").
 		AddEnvOp(EnvKeyTimeStart, model.EnvOpTypeMayRead).
@@ -195,14 +199,17 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
 		AddArg("metric", "", "m").
 		AddArg2Env(EnvKeyMetrics, "metric").
-		AddEnvOp(EnvKeyMetrics, model.EnvOpTypeRead)
-	metricsCache.AddSub("clear", "c").RegPowerCmd(MetricsCacheClearCmd,
-		"clear all metrics cache").Owner().
-		AddSub("cluster", "cc").RegPowerCmd(MetricsCacheClearClusterCmd,
+		AddEnvOp(EnvKeyMetrics, model.EnvOpTypeMayRead)
+	metricsCache.AddSub("clear", "c").RegPowerCmd(MetricsCacheClearClusterCmd,
 		"clear metrics cache for a specific cluster").
 		AddArg("cluster-id", "", "cluster", "id").
 		AddArg2Env(EnvKeyClusterID, "cluster-id").
-		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead)
+		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeRead).
+		AddArg("metric", "", "m").
+		AddArg2Env(EnvKeyMetrics, "metric").
+		AddEnvOp(EnvKeyMetrics, model.EnvOpTypeMayRead).Owner().
+		AddSub("all", "a").RegPowerCmd(MetricsCacheClearCmd,
+		"clear all metrics cache")
 }
 
 func RegisterHelp(tc *ticat.TiCat) {
@@ -214,7 +221,7 @@ func RegisterHelp(tc *ticat.TiCat) {
 		"metrics.fetch.all",
 		"metrics.cache.list",
 		"metrics.cache.clear",
-		"metrics.cache.clear.cluster",
+		"metrics.cache.clear.all",
 		"dig.random",
 		"dig.walk",
 		"dig.local",

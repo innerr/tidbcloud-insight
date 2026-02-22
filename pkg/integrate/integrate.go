@@ -30,7 +30,7 @@ func Integrate(tc *ticat.TiCat) error {
 	defEnv.SetBool("display.utf8", false)
 	defEnv.SetBool("display.meow", false)
 	defEnv.SetBool("display.color", true)
-	defEnv.SetBool(EnvKeyDisplayVerb, true)
+	defEnv.SetBool(EnvKeyVerbose, true)
 
 	defEnv.Set(EnvKeyCacheDir, "./cache")
 	defEnv.Set(EnvKeyMetaDir, "./meta")
