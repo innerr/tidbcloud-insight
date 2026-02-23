@@ -426,6 +426,11 @@ func validateAndExplainAnomalies(
 
 		qBase := calcWindowStats(data.qpsData, baseStart, baseEnd)
 		qEvent := calcWindowStats(data.qpsData, a.Timestamp, endTS)
+		edgeBaseStart := maxInt64(baseStart, a.Timestamp-1800)
+		edgeBaseEnd := a.Timestamp - sampleIntervalSec
+		edgeEventEnd := minInt64(endTS, a.Timestamp+1800)
+		qEdgeBase := calcWindowStats(data.qpsData, edgeBaseStart, edgeBaseEnd)
+		qEdgeEvent := calcWindowStats(data.qpsData, a.Timestamp, edgeEventEnd)
 		latBase := calcWindowStats(data.latencyData, baseStart, baseEnd)
 		latEvent := calcWindowStats(data.latencyData, a.Timestamp, endTS)
 		tikvLatBase := calcWindowStats(data.tikvGRPCLatencyData, baseStart, baseEnd)
@@ -434,9 +439,33 @@ func validateAndExplainAnomalies(
 		stmtCorr := calcWindowCorrelation(data.qpsData, data.statementData, a.Timestamp, endTS)
 		tikvCorr := calcWindowCorrelation(data.qpsData, data.tikvGRPCData, a.Timestamp, endTS)
 
-		ev := evaluateAnomalyEvidence(qBase, qEvent, latBase, latEvent, tikvLatBase, tikvLatEvent, stmtCorr, tikvCorr)
+		ev := evaluateAnomalyEvidence(
+			qBase, qEvent, qEdgeBase, qEdgeEvent,
+			latBase, latEvent, tikvLatBase, tikvLatEvent,
+			stmtCorr, tikvCorr, endTS-a.Timestamp+sampleIntervalSec,
+		)
 		if !ev.keep {
 			continue
+		}
+		// Long incidents are compared against the previous-day same window to
+		// suppress recurring diurnal patterns (business-hour ramps/plateaus).
+		// We only apply this to load-related labels to avoid hiding real
+		// latency degradations that are independent of daily traffic shape.
+		if endTS-a.Timestamp+sampleIntervalSec >= 2*3600 &&
+			(ev.reason == "WORKLOAD_LINKED_SHIFT" || ev.reason == "LOAD_AND_LATENCY_COUPLED") {
+			prevQ := calcWindowStats(data.qpsData, a.Timestamp-24*3600, endTS-24*3600)
+			prevLat := calcWindowStats(data.latencyData, a.Timestamp-24*3600, endTS-24*3600)
+			if isLikelyDiurnalRepeat(qEvent, prevQ, latEvent, prevLat) {
+				continue
+			}
+			// Fallback guard: very long workload-only shifts without previous-day
+			// evidence are typically low-confidence (window starts near cache head),
+			// so prefer dropping them over reporting multi-hour uncertain incidents.
+			if endTS-a.Timestamp+sampleIntervalSec >= 6*3600 &&
+				ev.reason == "WORKLOAD_LINKED_SHIFT" &&
+				prevQ.count < 3 {
+				continue
+			}
 		}
 
 		a.Confidence = ev.confidence
@@ -448,15 +477,40 @@ func validateAndExplainAnomalies(
 	return out
 }
 
+// isLikelyDiurnalRepeat detects whether current event level is close to the
+// previous-day same-time window, which usually indicates recurring workload
+// shape instead of a new operational incident.
+func isLikelyDiurnalRepeat(currQ, prevQ, currLat, prevLat windowStats) bool {
+	if currQ.count < 3 || prevQ.count < 3 {
+		return false
+	}
+	qRatio := (currQ.p90 + 1e-9) / (prevQ.p90 + 1e-9)
+	qSimilar := qRatio >= 0.75 && qRatio <= 1.35
+	if !qSimilar {
+		return false
+	}
+
+	// If latency windows are both available, require them to be similar too.
+	// This prevents filtering true long degradations that have new latency pain.
+	if currLat.count >= 3 && prevLat.count >= 3 {
+		latRatio := (currLat.p95 + 1e-9) / (prevLat.p95 + 1e-9)
+		return latRatio >= 0.70 && latRatio <= 1.50
+	}
+	return true
+}
+
 // evaluateAnomalyEvidence labels anomaly cause with explicit source-signal rules.
 // Design goals:
 // - suppress low-baseline false positives,
 // - keep workload-linked shifts with multi-metric support,
-// - keep latency-only degradations even when QPS is stable.
+// - keep latency-only degradations even when QPS is stable,
+// - suppress long diurnal ramps that look like anomalies only because baseline is earlier low load.
 func evaluateAnomalyEvidence(
-	qBase, qEvent, latBase, latEvent windowStats,
+	qBase, qEvent, qEdgeBase, qEdgeEvent windowStats,
+	latBase, latEvent windowStats,
 	tikvLatBase, tikvLatEvent windowStats,
 	stmtCorr, tikvCorr float64,
+	eventDurationSec int64,
 ) anomalyEvidence {
 	ev := anomalyEvidence{
 		reason:      "MIXED_OR_UNCERTAIN",
@@ -502,6 +556,17 @@ func evaluateAnomalyEvidence(
 	}
 
 	qpsAmplification := (qEvent.p95 + 1e-9) / (qBase.p95 + 1e-9)
+	qpsEdgeRatio := (qEdgeEvent.median + 1e-9) / (qEdgeBase.median + 1e-9)
+	qpsEdgeDelta := qEdgeEvent.median - qEdgeBase.median
+	hasEdgeJump := qEdgeBase.count >= 3 && qEdgeEvent.count >= 3 &&
+		(qpsEdgeRatio >= 1.2 || qpsEdgeDelta > maxFloat64(5.0, qBase.median*0.2))
+
+	// Long "workload-linked" incidents must start with a visible edge jump;
+	// otherwise this is usually a smooth day/night ramp, not an operational anomaly.
+	if eventDurationSec >= 3*3600 && ev.qpsSignal && !ev.latSignal && !hasEdgeJump {
+		return ev
+	}
+
 	ev.keep = true
 	switch {
 	case qBase.median < 1.0 && qEvent.p95 >= 5.0:
@@ -516,7 +581,7 @@ func evaluateAnomalyEvidence(
 	case ev.latSignal && !ev.qpsSignal:
 		ev.reason = "LATENCY_ONLY_DEGRADATION"
 		ev.confidence = 0.72
-	case ev.qpsSignal && qpsAmplification >= 1.4 && (stmtCorr >= 0.65 || tikvCorr >= 0.5):
+	case ev.qpsSignal && qpsAmplification >= 1.4 && hasEdgeJump && (stmtCorr >= 0.65 || tikvCorr >= 0.5):
 		// Workload-linked shift needs source-level linkage from TiDB statement or
 		// TiKV gRPC trajectories; this avoids labeling isolated QPS spikes as load shifts.
 		ev.reason = "WORKLOAD_LINKED_SHIFT"
