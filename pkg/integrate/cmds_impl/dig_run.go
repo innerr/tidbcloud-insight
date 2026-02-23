@@ -55,6 +55,12 @@ func loadMetricsData(cacheDir, clusterID string, startTS, endTS int64) (*metrics
 	if err != nil {
 		return nil, fmt.Errorf("failed to load QPS data: %w", err)
 	}
+	// When there are too few QPS points, anomaly inference is unstable and
+	// loading heavy histogram metrics is wasted work. Return early so caller can
+	// treat it as insufficient-data case.
+	if len(qpsData) < 80 {
+		return &metricsData{qpsData: qpsData}, nil
+	}
 
 	latencyData, err := loadMetricHistogramP99(promStorage, clusterID, "tidb_server_handle_query_duration_seconds_bucket", startTS, endTS)
 	if err != nil {
@@ -157,6 +163,11 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 
 	if len(data.qpsData) == 0 {
 		return fmt.Errorf("no QPS data available for analysis")
+	}
+	if len(data.qpsData) < 80 {
+		fmt.Println("\nNo significant anomalies detected (insufficient QPS samples).")
+		fmt.Printf("\nMerged anomaly events: 0 (window=0s)\n")
+		return nil
 	}
 
 	var timings []AlgorithmTiming
