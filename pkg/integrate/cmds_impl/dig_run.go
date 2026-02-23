@@ -41,10 +41,11 @@ type DigResult struct {
 }
 
 type metricsData struct {
-	qpsData       []analysis.TimeSeriesPoint
-	latencyData   []analysis.TimeSeriesPoint
-	statementData []analysis.TimeSeriesPoint
-	tikvGRPCData  []analysis.TimeSeriesPoint
+	qpsData             []analysis.TimeSeriesPoint
+	latencyData         []analysis.TimeSeriesPoint
+	statementData       []analysis.TimeSeriesPoint
+	tikvGRPCData        []analysis.TimeSeriesPoint
+	tikvGRPCLatencyData []analysis.TimeSeriesPoint
 }
 
 func loadMetricsData(cacheDir, clusterID string, startTS, endTS int64) (*metricsData, error) {
@@ -70,11 +71,17 @@ func loadMetricsData(cacheDir, clusterID string, startTS, endTS int64) (*metrics
 		fmt.Printf("Warning: failed to load TiKV gRPC data: %v\n", err)
 	}
 
+	tikvGRPCLatencyData, err := loadMetricHistogramP99(promStorage, clusterID, "tikv_grpc_msg_duration_seconds_bucket", startTS, endTS)
+	if err != nil {
+		fmt.Printf("Warning: failed to load TiKV gRPC latency data: %v\n", err)
+	}
+
 	return &metricsData{
-		qpsData:       qpsData,
-		latencyData:   latencyData,
-		statementData: statementData,
-		tikvGRPCData:  tikvGRPCData,
+		qpsData:             qpsData,
+		latencyData:         latencyData,
+		statementData:       statementData,
+		tikvGRPCData:        tikvGRPCData,
+		tikvGRPCLatencyData: tikvGRPCLatencyData,
 	}, nil
 }
 
@@ -421,11 +428,13 @@ func validateAndExplainAnomalies(
 		qEvent := calcWindowStats(data.qpsData, a.Timestamp, endTS)
 		latBase := calcWindowStats(data.latencyData, baseStart, baseEnd)
 		latEvent := calcWindowStats(data.latencyData, a.Timestamp, endTS)
+		tikvLatBase := calcWindowStats(data.tikvGRPCLatencyData, baseStart, baseEnd)
+		tikvLatEvent := calcWindowStats(data.tikvGRPCLatencyData, a.Timestamp, endTS)
 
 		stmtCorr := calcWindowCorrelation(data.qpsData, data.statementData, a.Timestamp, endTS)
 		tikvCorr := calcWindowCorrelation(data.qpsData, data.tikvGRPCData, a.Timestamp, endTS)
 
-		ev := evaluateAnomalyEvidence(qBase, qEvent, latBase, latEvent, stmtCorr, tikvCorr)
+		ev := evaluateAnomalyEvidence(qBase, qEvent, latBase, latEvent, tikvLatBase, tikvLatEvent, stmtCorr, tikvCorr)
 		if !ev.keep {
 			continue
 		}
@@ -446,6 +455,7 @@ func validateAndExplainAnomalies(
 // - keep latency-only degradations even when QPS is stable.
 func evaluateAnomalyEvidence(
 	qBase, qEvent, latBase, latEvent windowStats,
+	tikvLatBase, tikvLatEvent windowStats,
 	stmtCorr, tikvCorr float64,
 ) anomalyEvidence {
 	ev := anomalyEvidence{
@@ -479,6 +489,10 @@ func evaluateAnomalyEvidence(
 		ev.latSignal = latEvent.p99 > maxFloat64(1.0, latBase.p99*2.5) &&
 			latEvent.p90 > maxFloat64(0.2, latBase.p90*1.8)
 	}
+	// Backend latency signal from TiKV gRPC histogram helps differentiate whether
+	// front-end latency degradation is likely propagated from storage/backend path.
+	backendLatencySignal := tikvLatEvent.count >= 3 && tikvLatBase.count >= 3 &&
+		tikvLatEvent.p99 > maxFloat64(0.05, tikvLatBase.p99*2.0)
 	// Chronic latency path: if p95 is already >1s and remains significantly above
 	// local baseline, keep it as latency degradation even without sharp spikes.
 	chronicLatency := latEvent.count >= 6 && latEvent.p95 > 1.0 && latEvent.p95 > maxFloat64(1.0, latBase.p95*1.3)
@@ -493,6 +507,9 @@ func evaluateAnomalyEvidence(
 	case qBase.median < 1.0 && qEvent.p95 >= 5.0:
 		ev.reason = "LOW_BASELINE_BURST"
 		ev.confidence = 0.55
+	case (chronicLatency || ev.latSignal) && !ev.qpsSignal && backendLatencySignal:
+		ev.reason = "BACKEND_LATENCY_DEGRADATION"
+		ev.confidence = 0.78
 	case chronicLatency && !ev.qpsSignal:
 		ev.reason = "LATENCY_ONLY_DEGRADATION"
 		ev.confidence = 0.68
@@ -898,6 +915,15 @@ func detectSustainedLatencyDegradation(
 	return out
 }
 
+// compactContiguousAnomalies is phase-1 event stitching.
+// Algorithm:
+// 1) Sort by timestamp and greedily grow the current incident.
+// 2) For each candidate point, compute an adaptive local merge window from nearby cadence.
+// 3) Merge only when both checks pass:
+//   - compatibility check (gap/type/detector overlap),
+//   - continuity check (density + span guard) to prevent runaway 10h+ chains.
+//
+// This phase preserves dense contiguous bursts while splitting sparse periodic points.
 func compactContiguousAnomalies(anomalies []analysis.DetectedAnomaly, mergeGapSec, sampleIntervalSec int64) []analysis.DetectedAnomaly {
 	if len(anomalies) == 0 {
 		return anomalies
@@ -1042,6 +1068,9 @@ func calculateDynamicEventGap(anomalies []analysis.DetectedAnomaly, sampleInterv
 		return clampInt64(sampleIntervalSec*2, 120, 1800)
 	}
 	sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+	// Use midpoint between p50 and p75 of observed gaps:
+	// - p50 anchors to dominant cadence,
+	// - p75 allows moderate burst drift without exploding the window.
 	median := gaps[len(gaps)/2]
 	p75 := gaps[(len(gaps)*3)/4]
 	candidate := (median + p75) / 2
@@ -1235,6 +1264,9 @@ func minInt64(a, b int64) int64 {
 	return b
 }
 
+// mergeNearbyEventsByCadence is phase-2 stitching after contiguous compacting.
+// It merges short incidents that repeat with stable cadence (e.g. every 6-12 minutes)
+// into one operational incident, but still enforces density/span constraints.
 func mergeNearbyEventsByCadence(anomalies []analysis.DetectedAnomaly, sampleIntervalSec int64) []analysis.DetectedAnomaly {
 	if len(anomalies) <= 1 {
 		return anomalies
@@ -1416,9 +1448,6 @@ func shouldKeepMergingByDensity(
 	if currentDurationSec >= 20*60 || nextDurationSec >= 20*60 {
 		maxSpanSec = clampInt64(maxSpanSec+30*60, 3600, 6*3600)
 	}
-	if proposedSpanSec > maxSpanSec {
-		return false
-	}
 
 	if currentDurationSec >= 15*60 || nextDurationSec >= 15*60 {
 		minDensity -= 0.04
@@ -1429,8 +1458,12 @@ func shouldKeepMergingByDensity(
 	minDensity = math.Min(0.35, math.Max(0.12, minDensity))
 
 	if proposedSpanSec > maxSpanSec {
-		// Soft cap for dense, near-continuous incidents; hard cap still protects against runaway chains.
-		hardMaxSpanSec := clampInt64(maxSpanSec*2, 4*3600, 18*3600)
+		// Soft cap for dense, near-continuous incidents.
+		// Keep an extension only when:
+		// - gap is still small versus cadence,
+		// - density is clearly higher than normal threshold.
+		// Hard cap bounds absolute incident length to avoid over-merge chains.
+		hardMaxSpanSec := clampInt64(maxSpanSec*2, 4*3600, 12*3600)
 		if proposedSpanSec > hardMaxSpanSec {
 			return false
 		}

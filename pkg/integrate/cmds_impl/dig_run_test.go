@@ -277,6 +277,8 @@ func TestEvaluateAnomalyEvidence_LowBaselineBurst(t *testing.T) {
 		windowStats{count: 20, median: 0.4, p90: 6.0, p95: 8.0},
 		windowStats{},
 		windowStats{},
+		windowStats{},
+		windowStats{},
 		math.NaN(),
 		math.NaN(),
 	)
@@ -291,6 +293,8 @@ func TestEvaluateAnomalyEvidence_LatencyOnly(t *testing.T) {
 		windowStats{count: 20, median: 82, p90: 100, p95: 105},
 		windowStats{count: 40, p90: 0.03, p99: 0.1},
 		windowStats{count: 20, p90: 0.5, p99: 2.0},
+		windowStats{},
+		windowStats{},
 		0.2,
 		0.1,
 	)
@@ -305,6 +309,8 @@ func TestEvaluateAnomalyEvidence_WorkloadLinkedShift(t *testing.T) {
 		windowStats{count: 20, median: 180, p90: 190, p95: 200},
 		windowStats{count: 40, p90: 0.03, p99: 0.1},
 		windowStats{count: 20, p90: 0.04, p99: 0.12},
+		windowStats{},
+		windowStats{},
 		0.92,
 		0.81,
 	)
@@ -338,5 +344,21 @@ func TestDetectSustainedLatencyDegradation(t *testing.T) {
 	}
 	if out[0].Type != analysis.AnomalyLatencyDegraded {
 		t.Fatalf("unexpected anomaly type: %s", out[0].Type)
+	}
+}
+
+func TestEvaluateAnomalyEvidence_BackendLatencyDegradation(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 102, p90: 125, p95: 130},
+		windowStats{count: 40, p90: 0.03, p95: 0.05, p99: 0.1},
+		windowStats{count: 20, p90: 0.8, p95: 1.5, p99: 2.0},
+		windowStats{count: 40, p99: 0.03},
+		windowStats{count: 20, p99: 0.12},
+		0.1,
+		0.2,
+	)
+	if !ev.keep || ev.reason != "BACKEND_LATENCY_DEGRADATION" {
+		t.Fatalf("expected BACKEND_LATENCY_DEGRADATION keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
 	}
 }
