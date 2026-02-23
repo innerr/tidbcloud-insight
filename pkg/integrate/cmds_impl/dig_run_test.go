@@ -319,3 +319,24 @@ func TestExtractAnomalyReason(t *testing.T) {
 		t.Fatalf("unexpected reason: %s", reason)
 	}
 }
+
+func TestDetectSustainedLatencyDegradation(t *testing.T) {
+	var input []analysis.TimeSeriesPoint
+	ts := int64(1000)
+	for i := 0; i < 80; i++ {
+		v := 0.02
+		if i >= 20 && i < 35 {
+			v = 2.5
+		}
+		input = append(input, analysis.TimeSeriesPoint{Timestamp: ts, Value: v})
+		ts += 120
+	}
+
+	out := detectSustainedLatencyDegradation(input, "RawLatencySustainedDetector")
+	if len(out) == 0 {
+		t.Fatalf("expected sustained latency degradation anomaly")
+	}
+	if out[0].Type != analysis.AnomalyLatencyDegraded {
+		t.Fatalf("unexpected anomaly type: %s", out[0].Type)
+	}
+}
