@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,7 @@ type DigProfileResult struct {
 type DigAbnormalResult struct {
 	ClusterID string
 	Anomalies []analysis.DetectedAnomaly
+	Summary   *analysis.MergeSummary
 	Timings   []AlgorithmTiming
 }
 
@@ -137,7 +139,7 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	}
 
 	var timings []AlgorithmTiming
-	var allAnomalies []analysis.DetectedAnomaly
+	algorithmResults := make(map[string][]analysis.DetectedAnomaly)
 
 	fmt.Println("\nRunning anomaly detection algorithms...")
 
@@ -145,88 +147,101 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	detector := analysis.NewAnomalyDetector(analysis.DefaultAnomalyConfig())
 	qpsAnomalies := detector.DetectAll(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "AnomalyDetector.DetectAll", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, qpsAnomalies...)
+	algorithmResults["AnomalyDetector"] = qpsAnomalies
 
 	if len(data.latencyData) > 0 {
 		start = time.Now()
 		latencyAnomalies := detector.DetectLatencyAnomalies(data.latencyData, data.latencyData)
 		timings = append(timings, AlgorithmTiming{Name: "DetectLatencyAnomalies", Duration: time.Since(start)})
-		allAnomalies = append(allAnomalies, latencyAnomalies...)
+		algorithmResults["LatencyDetector"] = latencyAnomalies
 	}
 
 	start = time.Now()
 	advancedDetector := analysis.NewAdvancedAnomalyDetector(analysis.DefaultAdvancedAnomalyConfig())
 	advancedAnomalies := advancedDetector.DetectAllAdvanced(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "AdvancedAnomalyDetector.DetectAllAdvanced", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, advancedAnomalies...)
+	algorithmResults["AdvancedAnomalyDetector"] = advancedAnomalies
 
 	start = time.Now()
 	srDetector := analysis.NewSpectralResidualDetector(analysis.DefaultSRConfig())
 	srAnomalies := srDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "SpectralResidualDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, srAnomalies...)
+	algorithmResults["SpectralResidualDetector"] = srAnomalies
 
 	start = time.Now()
 	msDetector := analysis.NewMultiScaleAnomalyDetector(analysis.DefaultMultiScaleConfig())
 	msAnomalies := msDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "MultiScaleAnomalyDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, msAnomalies...)
+	algorithmResults["MultiScaleDetector"] = msAnomalies
 
 	start = time.Now()
 	dbDetector := analysis.NewDBSCANAnomalyDetector(analysis.DefaultDBSCANConfig())
 	dbAnomalies := dbDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "DBSCANAnomalyDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, dbAnomalies...)
+	algorithmResults["DBSCANDetector"] = dbAnomalies
 
 	start = time.Now()
 	hwDetector := analysis.NewHoltWintersDetector(analysis.DefaultHoltWintersConfig())
 	hwAnomalies := hwDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "HoltWintersDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, hwAnomalies...)
+	algorithmResults["HoltWintersDetector"] = hwAnomalies
 
 	start = time.Now()
 	ifDetector := analysis.NewIsolationForest(analysis.DefaultIsolationForestConfig())
 	ifAnomalies := ifDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "IsolationForest", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, ifAnomalies...)
+	algorithmResults["IsolationForest"] = ifAnomalies
 
 	start = time.Now()
 	shesdDetector := analysis.NewSHESDDetector(analysis.DefaultSHESDConfig())
 	shesdAnomalies := shesdDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "SHESDDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, shesdAnomalies...)
+	algorithmResults["SHESDDetector"] = shesdAnomalies
 
 	start = time.Now()
 	ensembleDetector := analysis.NewEnsembleAnomalyDetector(analysis.DefaultEnsembleAnomalyConfig())
 	ensembleAnomalies := ensembleDetector.DetectAll(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "EnsembleAnomalyDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, ensembleAnomalies...)
+	algorithmResults["EnsembleDetector"] = ensembleAnomalies
 
 	start = time.Now()
 	dtDetector := analysis.NewDynamicThresholdDetector(analysis.DefaultDynamicThresholdConfig())
 	_, dtAnomalies := dtDetector.ComputeThresholds(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "DynamicThresholdDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, dtAnomalies...)
+	algorithmResults["DynamicThresholdDetector"] = dtAnomalies
 
 	start = time.Now()
 	ctxDetector := analysis.NewContextualAnomalyDetector(analysis.DefaultContextualAnomalyConfig())
 	ctxAnomalies := ctxDetector.Detect(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "ContextualAnomalyDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, ctxAnomalies...)
+	algorithmResults["ContextualDetector"] = ctxAnomalies
 
 	start = time.Now()
 	peakDetector := analysis.NewPeakDetector(analysis.DefaultPeakDetectorConfig())
 	peakAnomalies := peakDetector.DetectPeakAnomalies(data.qpsData)
 	timings = append(timings, AlgorithmTiming{Name: "PeakDetector", Duration: time.Since(start)})
-	allAnomalies = append(allAnomalies, peakAnomalies...)
+	algorithmResults["PeakDetector"] = peakAnomalies
 
-	sort.Slice(allAnomalies, func(i, j int) bool {
-		return allAnomalies[i].Timestamp < allAnomalies[j].Timestamp
-	})
+	sampleIntervalSec := estimateMedianSampleInterval(data.qpsData)
+
+	mergeConfig := analysis.DefaultAnomalyMergerConfig()
+	mergeConfig.BaseWindowSeconds = int(clampInt64(sampleIntervalSec*4, 120, 1800))
+	mergeConfig.MinWindowSeconds = int(clampInt64(sampleIntervalSec, 60, 600))
+	mergeConfig.MaxWindowSeconds = int(clampInt64(sampleIntervalSec*12, 600, 7200))
+	mergeConfig.MinConfidence = 0.25
+
+	start = time.Now()
+	merged := analysis.NewAnomalyMerger(mergeConfig).Merge(algorithmResults)
+	timings = append(timings, AlgorithmTiming{Name: "AnomalyMerger.Merge", Duration: time.Since(start)})
+
+	mergeGapSec := calculateDynamicEventGap(merged.Anomalies, sampleIntervalSec)
+	mergedAnomalies := compactContiguousAnomalies(merged.Anomalies, mergeGapSec, sampleIntervalSec)
+	mergedAnomalies = mergeNearbyEventsByCadence(mergedAnomalies, sampleIntervalSec)
 
 	result := &DigAbnormalResult{
 		ClusterID: clusterID,
-		Anomalies: allAnomalies,
+		Anomalies: mergedAnomalies,
+		Summary:   &merged.Summary,
 		Timings:   timings,
 	}
 
@@ -274,6 +289,632 @@ func loadMetricTimeSeries(storage *prometheus_storage.PrometheusStorage, cluster
 	})
 
 	return result, nil
+}
+
+func estimateMedianSampleInterval(values []analysis.TimeSeriesPoint) int64 {
+	if len(values) < 2 {
+		return 300
+	}
+	sorted := make([]analysis.TimeSeriesPoint, len(values))
+	copy(sorted, values)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp < sorted[j].Timestamp
+	})
+	var diffs []int64
+	for i := 1; i < len(sorted); i++ {
+		d := sorted[i].Timestamp - sorted[i-1].Timestamp
+		if d > 0 {
+			diffs = append(diffs, d)
+		}
+	}
+	if len(diffs) == 0 {
+		return 300
+	}
+	sort.Slice(diffs, func(i, j int) bool { return diffs[i] < diffs[j] })
+	median := diffs[len(diffs)/2]
+	if median < 60 {
+		return 60
+	}
+	if median > 900 {
+		return 900
+	}
+	return median
+}
+
+func compactContiguousAnomalies(anomalies []analysis.DetectedAnomaly, mergeGapSec, sampleIntervalSec int64) []analysis.DetectedAnomaly {
+	if len(anomalies) == 0 {
+		return anomalies
+	}
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 60
+	}
+	if mergeGapSec < 120 {
+		mergeGapSec = 120
+	}
+	if mergeGapSec > 1800 {
+		mergeGapSec = 1800
+	}
+
+	sort.Slice(anomalies, func(i, j int) bool {
+		return anomalies[i].Timestamp < anomalies[j].Timestamp
+	})
+
+	var result []analysis.DetectedAnomaly
+	current := anomalies[0]
+	if current.EndTime == 0 {
+		current.EndTime = current.Timestamp
+	}
+	typeSet := map[analysis.AnomalyType]bool{current.Type: true}
+	detectorSet := make(map[string]bool)
+	for _, d := range current.DetectedBy {
+		detectorSet[d] = true
+	}
+	coverageSec := int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
+	mergedCount := 1
+
+	mergeOne := func(idx int, a analysis.DetectedAnomaly) {
+		nextEnd := a.EndTime
+		if nextEnd == 0 {
+			nextEnd = a.Timestamp
+		}
+		localWindow := calculateAdaptiveMergeWindow(anomalies, idx, mergeGapSec, sampleIntervalSec, current)
+		nextDurationSec := int64(calculateEventDurationSec(a.Timestamp, nextEnd, sampleIntervalSec))
+		proposedEnd := maxInt64(current.EndTime, nextEnd)
+		proposedSpanSec := proposedEnd - current.Timestamp + sampleIntervalSec
+		proposedCoverageSec := coverageSec + nextDurationSec
+		gapSec := a.Timestamp - current.EndTime
+		if shouldMergeIntoCurrent(current, a, localWindow, sampleIntervalSec, detectorSet, typeSet) &&
+			shouldContinueCompactMerge(current, a, gapSec, proposedSpanSec, proposedCoverageSec, sampleIntervalSec, mergeGapSec, mergedCount) {
+			if nextEnd > current.EndTime {
+				current.EndTime = nextEnd
+			}
+			current.Duration = int(current.EndTime - current.Timestamp)
+			typeSet[a.Type] = true
+			if a.Severity == analysis.SeverityCritical ||
+				(a.Severity == analysis.SeverityHigh && current.Severity != analysis.SeverityCritical) ||
+				(a.Severity == analysis.SeverityMedium && current.Severity == analysis.SeverityLow) {
+				current.Severity = a.Severity
+			}
+			if a.Confidence > current.Confidence {
+				current.Confidence = a.Confidence
+			}
+			if absFloat(a.ZScore) > absFloat(current.ZScore) {
+				current.ZScore = a.ZScore
+				current.Value = a.Value
+				current.Baseline = a.Baseline
+			}
+			for _, d := range a.DetectedBy {
+				detectorSet[d] = true
+			}
+			coverageSec = proposedCoverageSec
+			mergedCount++
+			return
+		}
+
+		finalizeCurrent := func() {
+			current.DetectedBy = setToSortedList(detectorSet)
+			if len(typeSet) > 1 {
+				current.Type = analysis.AnomalyQPSSpike
+			}
+			current.Duration = calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec)
+			current.Detail = fmt.Sprintf("Merged anomaly event (%d signals, %s)", len(current.DetectedBy), formatAnomalyDuration(current.Duration))
+			result = append(result, current)
+		}
+
+		finalizeCurrent()
+		current = a
+		if current.EndTime == 0 {
+			current.EndTime = current.Timestamp
+		}
+		typeSet = map[analysis.AnomalyType]bool{current.Type: true}
+		detectorSet = make(map[string]bool)
+		for _, d := range current.DetectedBy {
+			detectorSet[d] = true
+		}
+		coverageSec = int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
+		mergedCount = 1
+	}
+
+	for i := 1; i < len(anomalies); i++ {
+		mergeOne(i, anomalies[i])
+	}
+
+	current.DetectedBy = setToSortedList(detectorSet)
+	if len(typeSet) > 1 {
+		current.Type = analysis.AnomalyQPSSpike
+	}
+	current.Duration = calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec)
+	current.Detail = fmt.Sprintf("Merged anomaly event (%d signals, %s)", len(current.DetectedBy), formatAnomalyDuration(current.Duration))
+	result = append(result, current)
+
+	return result
+}
+
+func calculateEventDurationSec(startTS, endTS, sampleIntervalSec int64) int {
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 60
+	}
+	if endTS < startTS {
+		endTS = startTS
+	}
+	// Inclusive duration so single-point anomaly still has a visible duration.
+	return int((endTS - startTS) + sampleIntervalSec)
+}
+
+func calculateDynamicEventGap(anomalies []analysis.DetectedAnomaly, sampleIntervalSec int64) int64 {
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 60
+	}
+	if len(anomalies) < 2 {
+		return clampInt64(sampleIntervalSec*2, 120, 1800)
+	}
+	sorted := make([]analysis.DetectedAnomaly, len(anomalies))
+	copy(sorted, anomalies)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp < sorted[j].Timestamp
+	})
+
+	var gaps []int64
+	for i := 1; i < len(sorted); i++ {
+		g := sorted[i].Timestamp - sorted[i-1].Timestamp
+		if g > 0 {
+			gaps = append(gaps, g)
+		}
+	}
+	if len(gaps) == 0 {
+		return clampInt64(sampleIntervalSec*2, 120, 1800)
+	}
+	sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+	median := gaps[len(gaps)/2]
+	p75 := gaps[(len(gaps)*3)/4]
+	candidate := (median + p75) / 2
+	minGap := sampleIntervalSec * 2
+	maxGap := sampleIntervalSec * 10
+	return clampInt64(candidate, clampInt64(minGap, 120, 1800), clampInt64(maxGap, 240, 1800))
+}
+
+func calculateAdaptiveMergeWindow(
+	sortedAnomalies []analysis.DetectedAnomaly,
+	idx int,
+	baseGapSec, sampleIntervalSec int64,
+	current analysis.DetectedAnomaly,
+) int64 {
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 60
+	}
+	if baseGapSec <= 0 {
+		baseGapSec = sampleIntervalSec * 2
+	}
+
+	localGap := estimateLocalGap(sortedAnomalies, idx, baseGapSec)
+	window := clampInt64(maxInt64(baseGapSec, localGap), sampleIntervalSec*2, sampleIntervalSec*20)
+
+	currentDuration := current.EndTime - current.Timestamp
+	if currentDuration >= sampleIntervalSec*8 {
+		window = clampInt64(window+sampleIntervalSec*2, sampleIntervalSec*2, 1800)
+	}
+
+	return clampInt64(window, 120, 1800)
+}
+
+func estimateLocalGap(sortedAnomalies []analysis.DetectedAnomaly, idx int, fallback int64) int64 {
+	var gaps []int64
+	if idx > 0 {
+		if g := sortedAnomalies[idx].Timestamp - sortedAnomalies[idx-1].Timestamp; g > 0 {
+			gaps = append(gaps, g)
+		}
+	}
+	if idx+1 < len(sortedAnomalies) {
+		if g := sortedAnomalies[idx+1].Timestamp - sortedAnomalies[idx].Timestamp; g > 0 {
+			gaps = append(gaps, g)
+		}
+	}
+	if idx > 1 {
+		if g := sortedAnomalies[idx-1].Timestamp - sortedAnomalies[idx-2].Timestamp; g > 0 {
+			gaps = append(gaps, g)
+		}
+	}
+	// Need at least two local gap samples; otherwise keep conservative fallback.
+	if len(gaps) < 2 {
+		return fallback
+	}
+	sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+	return gaps[len(gaps)/2]
+}
+
+func shouldMergeIntoCurrent(
+	current, next analysis.DetectedAnomaly,
+	windowSec int64,
+	sampleIntervalSec int64,
+	currentDetectors map[string]bool,
+	currentTypes map[analysis.AnomalyType]bool,
+) bool {
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 60
+	}
+	if next.Timestamp > current.EndTime+windowSec {
+		return false
+	}
+	// Always merge very close points.
+	if next.Timestamp <= current.EndTime+sampleIntervalSec*2 {
+		return true
+	}
+	typeOverlap := hasTypeFamilyOverlap(currentTypes, next.Type)
+	detectorOverlap := false
+	for _, d := range next.DetectedBy {
+		if currentDetectors[d] {
+			detectorOverlap = true
+			break
+		}
+	}
+	if detectorOverlap {
+		return true
+	}
+	// Without detector overlap, require stricter type match.
+	return typeOverlap && current.Type == next.Type
+}
+
+func shouldContinueCompactMerge(
+	current, next analysis.DetectedAnomaly,
+	gapSec int64,
+	proposedSpanSec int64,
+	proposedCoverageSec int64,
+	sampleIntervalSec int64,
+	mergeGapSec int64,
+	mergedCount int,
+) bool {
+	if gapSec <= sampleIntervalSec*2 {
+		return true
+	}
+	if proposedSpanSec <= sampleIntervalSec*12 {
+		return true
+	}
+	if proposedSpanSec <= 0 {
+		return false
+	}
+
+	maxSpanSec := clampInt64(maxInt64(mergeGapSec*30, 3*3600), 3*3600, 6*3600)
+	currentDurationSec := int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
+	nextDurationSec := int64(calculateEventDurationSec(next.Timestamp, next.EndTime, sampleIntervalSec))
+	if currentDurationSec >= 20*60 || nextDurationSec >= 20*60 {
+		maxSpanSec = clampInt64(maxSpanSec+60*60, 3*3600, 8*3600)
+	}
+
+	density := float64(proposedCoverageSec) / float64(proposedSpanSec)
+	minDensity := 0.20
+	switch {
+	case proposedSpanSec >= 3*3600:
+		minDensity = 0.30
+	case proposedSpanSec >= 2*3600:
+		minDensity = 0.26
+	case proposedSpanSec >= 90*60:
+		minDensity = 0.22
+	}
+	if currentDurationSec >= 20*60 || nextDurationSec >= 20*60 {
+		minDensity -= 0.04
+	}
+	if mergedCount >= 6 {
+		minDensity += 0.02
+	}
+	minDensity = math.Min(0.40, math.Max(0.14, minDensity))
+
+	if proposedSpanSec > maxSpanSec {
+		// Soft cap: keep merging for dense incidents when idle gap is tiny.
+		hardMaxSpanSec := clampInt64(maxSpanSec*2, 4*3600, 18*3600)
+		if proposedSpanSec > hardMaxSpanSec {
+			return false
+		}
+		softGapSec := clampInt64(maxInt64(sampleIntervalSec*6, mergeGapSec/2), sampleIntervalSec*3, 20*60)
+		if gapSec > softGapSec {
+			return false
+		}
+		return density >= math.Min(0.45, minDensity+0.08)
+	}
+
+	return density >= minDensity
+}
+
+func hasTypeFamilyOverlap(typeSet map[analysis.AnomalyType]bool, t analysis.AnomalyType) bool {
+	if typeSet[t] {
+		return true
+	}
+	isQPSFamily := func(x analysis.AnomalyType) bool {
+		return x == analysis.AnomalyQPSSpike ||
+			x == analysis.AnomalyQPSDrop ||
+			x == analysis.AnomalySustainedHighQPS ||
+			x == analysis.AnomalySustainedLowQPS
+	}
+	if isQPSFamily(t) {
+		for k := range typeSet {
+			if isQPSFamily(k) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func clampInt64(v, minV, maxV int64) int64 {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func mergeNearbyEventsByCadence(anomalies []analysis.DetectedAnomaly, sampleIntervalSec int64) []analysis.DetectedAnomaly {
+	if len(anomalies) <= 1 {
+		return anomalies
+	}
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 60
+	}
+
+	sorted := make([]analysis.DetectedAnomaly, len(anomalies))
+	copy(sorted, anomalies)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp < sorted[j].Timestamp
+	})
+
+	cadenceGap := estimateCadenceGap(sorted, sampleIntervalSec)
+
+	var out []analysis.DetectedAnomaly
+	current := sorted[0]
+	if current.EndTime == 0 {
+		current.EndTime = current.Timestamp
+	}
+	coverageSec := int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
+	mergedCount := 1
+
+	for i := 1; i < len(sorted); i++ {
+		next := sorted[i]
+		if next.EndTime == 0 {
+			next.EndTime = next.Timestamp
+		}
+		gap := next.Timestamp - current.EndTime
+		localCadence := estimateLocalCadenceGap(sorted, i, cadenceGap, sampleIntervalSec)
+		localMergeWindow := calculateCadenceMergeWindow(current, next, localCadence, sampleIntervalSec, mergedCount)
+		nextDurationSec := int64(calculateEventDurationSec(next.Timestamp, next.EndTime, sampleIntervalSec))
+		proposedEnd := maxInt64(current.EndTime, next.EndTime)
+		proposedSpanSec := proposedEnd - current.Timestamp + sampleIntervalSec
+		proposedCoverageSec := coverageSec + nextDurationSec
+
+		if gap >= 0 &&
+			gap <= localMergeWindow &&
+			isCompatibleEvent(current, next) &&
+			shouldKeepMergingByDensity(current, next, gap, proposedSpanSec, proposedCoverageSec, sampleIntervalSec, mergedCount, localCadence) {
+			if next.EndTime > current.EndTime {
+				current.EndTime = next.EndTime
+			}
+			current.Duration = calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec)
+			if next.Severity == analysis.SeverityCritical ||
+				(next.Severity == analysis.SeverityHigh && current.Severity != analysis.SeverityCritical) ||
+				(next.Severity == analysis.SeverityMedium && current.Severity == analysis.SeverityLow) {
+				current.Severity = next.Severity
+			}
+			if next.Confidence > current.Confidence {
+				current.Confidence = next.Confidence
+			}
+			if absFloat(next.ZScore) > absFloat(current.ZScore) {
+				current.ZScore = next.ZScore
+				current.Value = next.Value
+				current.Baseline = next.Baseline
+			}
+			current.DetectedBy = unionDetectors(current.DetectedBy, next.DetectedBy)
+			current.Detail = fmt.Sprintf("Merged anomaly event (%d signals, %s)", len(current.DetectedBy), formatAnomalyDuration(current.Duration))
+			coverageSec = proposedCoverageSec
+			mergedCount++
+			continue
+		}
+		current.Duration = calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec)
+		current.Detail = fmt.Sprintf("Merged anomaly event (%d signals, %s)", len(current.DetectedBy), formatAnomalyDuration(current.Duration))
+		out = append(out, current)
+		current = next
+		coverageSec = nextDurationSec
+		mergedCount = 1
+	}
+	current.Duration = calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec)
+	current.Detail = fmt.Sprintf("Merged anomaly event (%d signals, %s)", len(current.DetectedBy), formatAnomalyDuration(current.Duration))
+	out = append(out, current)
+	return out
+}
+
+func estimateCadenceGap(anomalies []analysis.DetectedAnomaly, sampleIntervalSec int64) int64 {
+	var gaps []int64
+	for i := 1; i < len(anomalies); i++ {
+		if !isCompatibleEvent(anomalies[i-1], anomalies[i]) {
+			continue
+		}
+		g := anomalies[i].Timestamp - anomalies[i-1].Timestamp
+		if g > 0 {
+			gaps = append(gaps, g)
+		}
+	}
+	if len(gaps) == 0 {
+		return clampInt64(sampleIntervalSec*6, sampleIntervalSec*3, 1200)
+	}
+	sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+	median := gaps[len(gaps)/2]
+	return clampInt64(median, sampleIntervalSec*3, 1200)
+}
+
+func estimateLocalCadenceGap(
+	anomalies []analysis.DetectedAnomaly,
+	idx int,
+	fallbackCadenceSec int64,
+	sampleIntervalSec int64,
+) int64 {
+	var gaps []int64
+	collectGap := func(left, right int) {
+		if left < 0 || right >= len(anomalies) || left >= right {
+			return
+		}
+		if !isCompatibleEvent(anomalies[left], anomalies[right]) {
+			return
+		}
+		g := anomalies[right].Timestamp - anomalies[left].Timestamp
+		if g > 0 {
+			gaps = append(gaps, g)
+		}
+	}
+	collectGap(idx-1, idx)
+	collectGap(idx-2, idx-1)
+	collectGap(idx, idx+1)
+	collectGap(idx-3, idx-2)
+
+	if len(gaps) == 0 {
+		return clampInt64(fallbackCadenceSec, sampleIntervalSec*2, 1200)
+	}
+	sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+	return clampInt64(gaps[len(gaps)/2], sampleIntervalSec*2, 1200)
+}
+
+func calculateCadenceMergeWindow(
+	current, next analysis.DetectedAnomaly,
+	localCadenceSec int64,
+	sampleIntervalSec int64,
+	mergedCount int,
+) int64 {
+	windowSec := maxInt64(sampleIntervalSec*3, localCadenceSec*3/2)
+	currentDurationSec := int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
+	nextDurationSec := int64(calculateEventDurationSec(next.Timestamp, next.EndTime, sampleIntervalSec))
+	if currentDurationSec >= 15*60 || nextDurationSec >= 15*60 {
+		windowSec += sampleIntervalSec * 2
+	}
+	if mergedCount >= 6 {
+		windowSec = minInt64(windowSec, localCadenceSec+sampleIntervalSec*2)
+	}
+	return clampInt64(windowSec, sampleIntervalSec*2, 1800)
+}
+
+func shouldKeepMergingByDensity(
+	current, next analysis.DetectedAnomaly,
+	gapSec int64,
+	proposedSpanSec int64,
+	proposedCoverageSec int64,
+	sampleIntervalSec int64,
+	mergedCount int,
+	localCadenceSec int64,
+) bool {
+	if gapSec <= sampleIntervalSec*2 {
+		return true
+	}
+	if proposedSpanSec <= sampleIntervalSec*12 {
+		return true
+	}
+	if proposedSpanSec <= 0 {
+		return false
+	}
+
+	density := float64(proposedCoverageSec) / float64(proposedSpanSec)
+	minDensity := 0.16
+	switch {
+	case proposedSpanSec >= 3*3600:
+		minDensity = 0.28
+	case proposedSpanSec >= 90*60:
+		minDensity = 0.24
+	case proposedSpanSec >= 30*60:
+		minDensity = 0.20
+	}
+
+	currentDurationSec := int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
+	nextDurationSec := int64(calculateEventDurationSec(next.Timestamp, next.EndTime, sampleIntervalSec))
+	maxSpanSec := clampInt64(localCadenceSec*20, 3600, 4*3600)
+	if currentDurationSec >= 20*60 || nextDurationSec >= 20*60 {
+		maxSpanSec = clampInt64(maxSpanSec+30*60, 3600, 6*3600)
+	}
+	if proposedSpanSec > maxSpanSec {
+		return false
+	}
+
+	if currentDurationSec >= 15*60 || nextDurationSec >= 15*60 {
+		minDensity -= 0.04
+	}
+	if mergedCount >= 6 {
+		minDensity += 0.02
+	}
+	minDensity = math.Min(0.35, math.Max(0.12, minDensity))
+
+	if proposedSpanSec > maxSpanSec {
+		// Soft cap for dense, near-continuous incidents; hard cap still protects against runaway chains.
+		hardMaxSpanSec := clampInt64(maxSpanSec*2, 4*3600, 18*3600)
+		if proposedSpanSec > hardMaxSpanSec {
+			return false
+		}
+		softGapSec := clampInt64(maxInt64(sampleIntervalSec*6, localCadenceSec/2), sampleIntervalSec*3, 20*60)
+		if gapSec > softGapSec {
+			return false
+		}
+		return density >= math.Min(0.45, minDensity+0.08)
+	}
+
+	return density >= minDensity
+}
+
+func isCompatibleEvent(a, b analysis.DetectedAnomaly) bool {
+	// Prefer merging same type-family events.
+	typeSet := map[analysis.AnomalyType]bool{a.Type: true}
+	if !hasTypeFamilyOverlap(typeSet, b.Type) {
+		return false
+	}
+
+	// Require detector overlap to avoid over-merging unrelated anomalies.
+	dset := make(map[string]bool)
+	for _, d := range a.DetectedBy {
+		dset[d] = true
+	}
+	for _, d := range b.DetectedBy {
+		if dset[d] {
+			return true
+		}
+	}
+	return false
+}
+
+func unionDetectors(a, b []string) []string {
+	set := make(map[string]bool)
+	for _, d := range a {
+		set[d] = true
+	}
+	for _, d := range b {
+		set[d] = true
+	}
+	return setToSortedList(set)
+}
+
+func setToSortedList(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func absFloat(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func loadCounterMetricAsRate(files []string, startTS, endTS int64) ([]analysis.TimeSeriesPoint, error) {
@@ -658,6 +1299,7 @@ func printAbnormalJSON(result *DigAbnormalResult) {
 	output := map[string]interface{}{
 		"cluster_id": result.ClusterID,
 		"anomalies":  result.Anomalies,
+		"summary":    result.Summary,
 		"timings":    formatTimings(result.Timings),
 	}
 	fmt.Println(mustMarshalJSON(output))
@@ -700,6 +1342,10 @@ func printAbnormalResult(result *DigAbnormalResult) {
 	} else {
 		fmt.Println()
 		fmt.Println("No significant anomalies detected.")
+	}
+	if result.Summary != nil {
+		fmt.Println()
+		fmt.Printf("Merged anomaly events: %d (window=%ds)\n", result.Summary.TotalAnomalies, result.Summary.MergeWindowSec)
 	}
 	printSummaryWithTimings(result.ClusterID, result.Timings)
 }
