@@ -490,6 +490,25 @@ func TestEvaluateAnomalyEvidence_LongWorkloadShiftNeedsStrongerEvidence(t *testi
 	}
 }
 
+func TestEvaluateAnomalyEvidence_LongCoupledNeedsStrongerWorkloadEvidence(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 170, p90: 185, p95: 210},
+		windowStats{count: 10, median: 110},
+		windowStats{count: 10, median: 132},
+		windowStats{count: 40, p90: 0.03, p99: 0.08},
+		windowStats{count: 20, p90: 0.8, p99: 2.0},
+		windowStats{},
+		windowStats{},
+		0.70,
+		0.55,
+		3*3600,
+	)
+	if ev.keep {
+		t.Fatalf("expected long coupled anomaly with weak linkage to be filtered, got reason=%s", ev.reason)
+	}
+}
+
 func TestIsLikelyDiurnalRepeat_TrueWhenQPSAndLatencySimilar(t *testing.T) {
 	ok := isLikelyDiurnalRepeat(
 		windowStats{count: 12, p90: 180, p95: 200},
@@ -558,5 +577,22 @@ func TestApplyReasonToAnomalyMeasurement_DoesNotOverrideLatencyWhenNotWorse(t *t
 	applyReasonToAnomalyMeasurement(&a, ev)
 	if a.Value != 2.0 || a.Baseline != 1.0 {
 		t.Fatalf("expected original measurement kept, got value=%.3f baseline=%.3f", a.Value, a.Baseline)
+	}
+}
+
+func TestCalculateHighValueCoverage(t *testing.T) {
+	values := []analysis.TimeSeriesPoint{
+		{Timestamp: 1000, Value: 0.2},
+		{Timestamp: 1120, Value: 0.9},
+		{Timestamp: 1240, Value: 1.2},
+		{Timestamp: 1360, Value: 0.1},
+		{Timestamp: 1480, Value: 1.1},
+	}
+	cov, firstTS, lastTS := calculateHighValueCoverage(values, 1000, 1480, 0.8)
+	if math.Abs(cov-0.6) > 1e-9 {
+		t.Fatalf("expected coverage 0.6, got %.6f", cov)
+	}
+	if firstTS != 1120 || lastTS != 1480 {
+		t.Fatalf("unexpected first/last high timestamp: %d %d", firstTS, lastTS)
 	}
 }
