@@ -279,8 +279,11 @@ func TestEvaluateAnomalyEvidence_LowBaselineBurst(t *testing.T) {
 		windowStats{},
 		windowStats{},
 		windowStats{},
+		windowStats{},
+		windowStats{},
 		math.NaN(),
 		math.NaN(),
+		1200,
 	)
 	if !ev.keep || ev.reason != "LOW_BASELINE_BURST" {
 		t.Fatalf("expected LOW_BASELINE_BURST keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
@@ -291,12 +294,15 @@ func TestEvaluateAnomalyEvidence_LatencyOnly(t *testing.T) {
 	ev := evaluateAnomalyEvidence(
 		windowStats{count: 40, median: 80, p95: 100},
 		windowStats{count: 20, median: 82, p90: 100, p95: 105},
+		windowStats{count: 10, median: 80},
+		windowStats{count: 10, median: 81},
 		windowStats{count: 40, p90: 0.03, p99: 0.1},
 		windowStats{count: 20, p90: 0.5, p99: 2.0},
 		windowStats{},
 		windowStats{},
 		0.2,
 		0.1,
+		1800,
 	)
 	if !ev.keep || ev.reason != "LATENCY_ONLY_DEGRADATION" {
 		t.Fatalf("expected LATENCY_ONLY_DEGRADATION keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
@@ -307,12 +313,15 @@ func TestEvaluateAnomalyEvidence_WorkloadLinkedShift(t *testing.T) {
 	ev := evaluateAnomalyEvidence(
 		windowStats{count: 40, median: 100, p95: 120},
 		windowStats{count: 20, median: 180, p90: 190, p95: 200},
+		windowStats{count: 10, median: 110},
+		windowStats{count: 10, median: 170},
 		windowStats{count: 40, p90: 0.03, p99: 0.1},
 		windowStats{count: 20, p90: 0.04, p99: 0.12},
 		windowStats{},
 		windowStats{},
 		0.92,
 		0.81,
+		1800,
 	)
 	if !ev.keep || ev.reason != "WORKLOAD_LINKED_SHIFT" {
 		t.Fatalf("expected WORKLOAD_LINKED_SHIFT keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
@@ -351,14 +360,79 @@ func TestEvaluateAnomalyEvidence_BackendLatencyDegradation(t *testing.T) {
 	ev := evaluateAnomalyEvidence(
 		windowStats{count: 40, median: 100, p95: 120},
 		windowStats{count: 20, median: 102, p90: 125, p95: 130},
+		windowStats{count: 10, median: 100},
+		windowStats{count: 10, median: 101},
 		windowStats{count: 40, p90: 0.03, p95: 0.05, p99: 0.1},
 		windowStats{count: 20, p90: 0.8, p95: 1.5, p99: 2.0},
 		windowStats{count: 40, p99: 0.03},
 		windowStats{count: 20, p99: 0.12},
 		0.1,
 		0.2,
+		2400,
 	)
 	if !ev.keep || ev.reason != "BACKEND_LATENCY_DEGRADATION" {
 		t.Fatalf("expected BACKEND_LATENCY_DEGRADATION keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
+	}
+}
+
+func TestEvaluateAnomalyEvidence_LongSmoothRampIsFiltered(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 180, p90: 190, p95: 200},
+		windowStats{count: 10, median: 165},
+		windowStats{count: 10, median: 170},
+		windowStats{count: 40, p90: 0.03, p99: 0.08},
+		windowStats{count: 20, p90: 0.03, p99: 0.09},
+		windowStats{},
+		windowStats{},
+		0.82,
+		0.73,
+		4*3600,
+	)
+	if ev.keep {
+		t.Fatalf("expected long smooth ramp to be filtered, got keep=true reason=%s", ev.reason)
+	}
+}
+
+func TestEvaluateAnomalyEvidence_LongShiftWithEdgeIsKept(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 180, p90: 190, p95: 200},
+		windowStats{count: 10, median: 110},
+		windowStats{count: 10, median: 170},
+		windowStats{count: 40, p90: 0.03, p99: 0.08},
+		windowStats{count: 20, p90: 0.03, p99: 0.09},
+		windowStats{},
+		windowStats{},
+		0.82,
+		0.73,
+		4*3600,
+	)
+	if !ev.keep || ev.reason != "WORKLOAD_LINKED_SHIFT" {
+		t.Fatalf("expected long shift with edge to be kept, got keep=%v reason=%s", ev.keep, ev.reason)
+	}
+}
+
+func TestIsLikelyDiurnalRepeat_TrueWhenQPSAndLatencySimilar(t *testing.T) {
+	ok := isLikelyDiurnalRepeat(
+		windowStats{count: 12, p90: 180, p95: 200},
+		windowStats{count: 12, p90: 170, p95: 195},
+		windowStats{count: 12, p95: 0.30},
+		windowStats{count: 12, p95: 0.28},
+	)
+	if !ok {
+		t.Fatalf("expected diurnal repeat to be true")
+	}
+}
+
+func TestIsLikelyDiurnalRepeat_FalseWhenLatencyDiverges(t *testing.T) {
+	ok := isLikelyDiurnalRepeat(
+		windowStats{count: 12, p90: 180, p95: 200},
+		windowStats{count: 12, p90: 175, p95: 198},
+		windowStats{count: 12, p95: 1.80},
+		windowStats{count: 12, p95: 0.40},
+	)
+	if ok {
+		t.Fatalf("expected diurnal repeat to be false when latency diverges")
 	}
 }
