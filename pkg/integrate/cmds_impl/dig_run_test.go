@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"math"
 	"testing"
 
 	"tidbcloud-insight/pkg/analysis"
@@ -267,5 +268,54 @@ func TestCompactContiguousAnomalies_SoftCapMergesWhenTinyGapAndDense(t *testing.
 	merged := compactContiguousAnomalies(input, 480, 120)
 	if len(merged) != 1 {
 		t.Fatalf("expected dense long segments with tiny gap to merge, got %d", len(merged))
+	}
+}
+
+func TestEvaluateAnomalyEvidence_LowBaselineBurst(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 0.1, p95: 0.2},
+		windowStats{count: 20, median: 0.4, p90: 6.0, p95: 8.0},
+		windowStats{},
+		windowStats{},
+		math.NaN(),
+		math.NaN(),
+	)
+	if !ev.keep || ev.reason != "LOW_BASELINE_BURST" {
+		t.Fatalf("expected LOW_BASELINE_BURST keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
+	}
+}
+
+func TestEvaluateAnomalyEvidence_LatencyOnly(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 80, p95: 100},
+		windowStats{count: 20, median: 82, p90: 100, p95: 105},
+		windowStats{count: 40, p90: 0.03, p99: 0.1},
+		windowStats{count: 20, p90: 0.5, p99: 2.0},
+		0.2,
+		0.1,
+	)
+	if !ev.keep || ev.reason != "LATENCY_ONLY_DEGRADATION" {
+		t.Fatalf("expected LATENCY_ONLY_DEGRADATION keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
+	}
+}
+
+func TestEvaluateAnomalyEvidence_WorkloadLinkedShift(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 180, p90: 190, p95: 200},
+		windowStats{count: 40, p90: 0.03, p99: 0.1},
+		windowStats{count: 20, p90: 0.04, p99: 0.12},
+		0.92,
+		0.81,
+	)
+	if !ev.keep || ev.reason != "WORKLOAD_LINKED_SHIFT" {
+		t.Fatalf("expected WORKLOAD_LINKED_SHIFT keep=true, got reason=%s keep=%v", ev.reason, ev.keep)
+	}
+}
+
+func TestExtractAnomalyReason(t *testing.T) {
+	reason := extractAnomalyReason("reason=WORKLOAD_LINKED_SHIFT qps_p95=100")
+	if reason != "WORKLOAD_LINKED_SHIFT" {
+		t.Fatalf("unexpected reason: %s", reason)
 	}
 }
