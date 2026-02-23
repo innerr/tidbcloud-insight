@@ -455,3 +455,11 @@ func TestIsLikelyDiurnalRepeat_FalseWhenLatencyDiverges(t *testing.T) {
 		t.Fatalf("expected diurnal repeat to be false when latency diverges")
 	}
 }
+
+func TestApplyReasonToAnomalyType(t *testing.T) {
+	a := analysis.DetectedAnomaly{Type: analysis.AnomalyQPSSpike}
+	applyReasonToAnomalyType(&a, "LATENCY_ONLY_DEGRADATION")
+	if a.Type != analysis.AnomalyLatencyDegraded {
+		t.Fatalf("expected LATENCY_DEGRADED, got %s", a.Type)
+	}
+}
