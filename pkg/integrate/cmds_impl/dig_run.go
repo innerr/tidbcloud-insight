@@ -1577,12 +1577,21 @@ func shouldKeepMergingByDensity(
 	currentDurationSec := int64(calculateEventDurationSec(current.Timestamp, current.EndTime, sampleIntervalSec))
 	nextDurationSec := int64(calculateEventDurationSec(next.Timestamp, next.EndTime, sampleIntervalSec))
 	maxSpanSec := clampInt64(localCadenceSec*20, 3600, 4*3600)
+	latencyDominant := isLatencyDominantEvent(current) || isLatencyDominantEvent(next)
 	if currentDurationSec >= 20*60 || nextDurationSec >= 20*60 {
 		maxSpanSec = clampInt64(maxSpanSec+30*60, 3600, 6*3600)
+	}
+	if latencyDominant {
+		// Latency-only chains are often sparse recurrent spikes; keep them tighter
+		// than workload chains to avoid multi-hour over-merge artifacts.
+		maxSpanSec = minInt64(maxSpanSec, 3*3600)
 	}
 
 	if currentDurationSec >= 15*60 || nextDurationSec >= 15*60 {
 		minDensity -= 0.04
+	}
+	if latencyDominant && proposedSpanSec >= 90*60 {
+		minDensity += 0.08
 	}
 	if mergedCount >= 6 {
 		minDensity += 0.02
@@ -1607,6 +1616,19 @@ func shouldKeepMergingByDensity(
 	}
 
 	return density >= minDensity
+}
+
+func isLatencyDominantEvent(a analysis.DetectedAnomaly) bool {
+	if len(a.DetectedBy) == 0 {
+		return false
+	}
+	latencyLike := 0
+	for _, d := range a.DetectedBy {
+		if strings.Contains(strings.ToLower(d), "latency") {
+			latencyLike++
+		}
+	}
+	return latencyLike*2 >= len(a.DetectedBy)
 }
 
 func isCompatibleEvent(a, b analysis.DetectedAnomaly) bool {
