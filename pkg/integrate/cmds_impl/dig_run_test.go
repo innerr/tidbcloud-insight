@@ -451,6 +451,25 @@ func TestEvaluateAnomalyEvidence_ShortIntenseBurst(t *testing.T) {
 	}
 }
 
+func TestEvaluateAnomalyEvidence_LongWorkloadShiftNeedsStrongerEvidence(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 145, p90: 150, p95: 170},
+		windowStats{count: 10, median: 110},
+		windowStats{count: 10, median: 132},
+		windowStats{count: 40, p90: 0.03, p99: 0.08},
+		windowStats{count: 20, p90: 0.03, p99: 0.09},
+		windowStats{},
+		windowStats{},
+		0.70,
+		0.55,
+		3*3600,
+	)
+	if ev.keep {
+		t.Fatalf("expected long workload shift with weak linkage to be filtered, got reason=%s", ev.reason)
+	}
+}
+
 func TestIsLikelyDiurnalRepeat_TrueWhenQPSAndLatencySimilar(t *testing.T) {
 	ok := isLikelyDiurnalRepeat(
 		windowStats{count: 12, p90: 180, p95: 200},
