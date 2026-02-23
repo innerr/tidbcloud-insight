@@ -566,6 +566,11 @@ func evaluateAnomalyEvidence(
 	if eventDurationSec >= 3*3600 && ev.qpsSignal && !ev.latSignal && !hasEdgeJump {
 		return ev
 	}
+	// Sparse long windows (mostly zero points) are usually bursty fragments that
+	// were merged by cadence, not a continuously degraded period.
+	if eventDurationSec >= 2*3600 && ev.qpsSignal && !ev.latSignal && qEvent.zeroRat >= 0.60 {
+		return ev
+	}
 
 	ev.keep = true
 	switch {
