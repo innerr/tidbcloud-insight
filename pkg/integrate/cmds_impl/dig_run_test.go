@@ -226,6 +226,26 @@ func TestMergeNearbyEventsByCadence_MaxSpanBreaksLongChain(t *testing.T) {
 	}
 }
 
+func TestMergeNearbyEventsByCadence_LatencyDominantChainSplitEarlier(t *testing.T) {
+	// 2m latency anomalies every 8m for ~4h should be split for latency-dominant chains.
+	var input []analysis.DetectedAnomaly
+	for i := 0; i < 30; i++ {
+		ts := int64(1000 + i*480)
+		input = append(input, analysis.DetectedAnomaly{
+			Type:       analysis.AnomalyLatencySpike,
+			Severity:   analysis.SeverityHigh,
+			Timestamp:  ts,
+			EndTime:    ts,
+			DetectedBy: []string{"LatencyDetector", "RawLatencyDetector"},
+		})
+	}
+
+	merged := mergeNearbyEventsByCadence(input, 120)
+	if len(merged) <= 1 {
+		t.Fatalf("expected latency-dominant long chain to be split, got %d", len(merged))
+	}
+}
+
 func TestCompactContiguousAnomalies_BreaksOverLongChain(t *testing.T) {
 	// 2m anomaly every 6m for ~10h should not be compacted into one event.
 	var input []analysis.DetectedAnomaly
