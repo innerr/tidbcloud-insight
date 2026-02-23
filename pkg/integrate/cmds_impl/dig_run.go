@@ -573,6 +573,13 @@ func evaluateAnomalyEvidence(
 	qpsEdgeDelta := qEdgeEvent.median - qEdgeBase.median
 	hasEdgeJump := qEdgeBase.count >= 3 && qEdgeEvent.count >= 3 &&
 		(qpsEdgeRatio >= 1.2 || qpsEdgeDelta > maxFloat64(5.0, qBase.median*0.2))
+	// Long workload-shift incidents require stronger source linkage than short bursts.
+	// This avoids accepting long daytime ramps with only weak correlation evidence.
+	workloadLinkedEvidence := (stmtCorr >= 0.65 || tikvCorr >= 0.5)
+	if eventDurationSec >= 2*3600 {
+		workloadLinkedEvidence = (stmtCorr >= 0.78 || tikvCorr >= 0.62) &&
+			(qpsEdgeRatio >= 1.3 || qpsEdgeDelta > maxFloat64(8.0, qBase.median*0.25))
+	}
 
 	// Long "workload-linked" incidents must start with a visible edge jump;
 	// otherwise this is usually a smooth day/night ramp, not an operational anomaly.
@@ -599,7 +606,7 @@ func evaluateAnomalyEvidence(
 	case ev.latSignal && !ev.qpsSignal:
 		ev.reason = "LATENCY_ONLY_DEGRADATION"
 		ev.confidence = 0.72
-	case ev.qpsSignal && qpsAmplification >= 1.4 && hasEdgeJump && (stmtCorr >= 0.65 || tikvCorr >= 0.5):
+	case ev.qpsSignal && qpsAmplification >= 1.4 && hasEdgeJump && workloadLinkedEvidence:
 		// Workload-linked shift needs source-level linkage from TiDB statement or
 		// TiKV gRPC trajectories; this avoids labeling isolated QPS spikes as load shifts.
 		ev.reason = "WORKLOAD_LINKED_SHIFT"
