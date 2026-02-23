@@ -467,8 +467,12 @@ func loadMetricHistogramP99(storage *prometheus_storage.PrometheusStorage, clust
 		}
 	}
 
+	// Histogram buckets are cumulative counters, so convert them to per-interval deltas
+	// before calculating quantiles.
+	ratesByTs := calcHistogramCounterRates(dataByTs)
+
 	var result []analysis.TimeSeriesPoint
-	for ts, buckets := range dataByTs {
+	for ts, buckets := range ratesByTs {
 		p99 := analysis.HistogramQuantile(buckets, 0.99)
 		if !isNaN(p99) {
 			result = append(result, analysis.TimeSeriesPoint{
@@ -483,6 +487,45 @@ func loadMetricHistogramP99(storage *prometheus_storage.PrometheusStorage, clust
 	})
 
 	return result, nil
+}
+
+func calcHistogramCounterRates(tsData map[int64]map[string]float64) map[int64]map[string]float64 {
+	var sortedTS []int64
+	for ts := range tsData {
+		sortedTS = append(sortedTS, ts)
+	}
+	sort.Slice(sortedTS, func(i, j int) bool {
+		return sortedTS[i] < sortedTS[j]
+	})
+
+	result := make(map[int64]map[string]float64)
+	for i := 1; i < len(sortedTS); i++ {
+		prevTS := sortedTS[i-1]
+		currTS := sortedTS[i]
+
+		prevBuckets := tsData[prevTS]
+		currBuckets := tsData[currTS]
+
+		delta := make(map[string]float64)
+		for le, curr := range currBuckets {
+			prev := prevBuckets[le]
+			d := curr - prev
+			if d >= 0 {
+				delta[le] = d
+			}
+		}
+		for le, curr := range currBuckets {
+			if _, ok := prevBuckets[le]; !ok {
+				delta[le] = curr
+			}
+		}
+
+		if delta["+Inf"] > 0 {
+			result[currTS] = delta
+		}
+	}
+
+	return result
 }
 
 func isNaN(f float64) bool {
@@ -593,11 +636,11 @@ func parsePromFileForHistogram(filePath string, startTS, endTS int64, dataByTs m
 			continue
 		}
 
-		if dataByTs[ts] == nil {
-			dataByTs[ts] = make(map[string]float64)
+			if dataByTs[ts] == nil {
+				dataByTs[ts] = make(map[string]float64)
+			}
+			dataByTs[ts][le] += value
 		}
-		dataByTs[ts][le] = value
-	}
 
 	return scanner.Err()
 }

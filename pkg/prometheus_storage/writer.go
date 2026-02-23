@@ -51,7 +51,7 @@ func (s *PrometheusStorage) NewMetricWriter(clusterID, metricName string, gapSta
 
 	bufWriter := bufio.NewWriterSize(tmpFile, 64*1024)
 
-	if _, err := fmt.Fprintf(bufWriter, "# TYPE %s gauge\n\n", metricName); err != nil {
+	if _, err := fmt.Fprintf(bufWriter, "# TYPE %s %s\n\n", metricName, inferMetricType(metricName)); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return nil, fmt.Errorf("failed to write header: %w", err)

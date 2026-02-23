@@ -345,7 +345,7 @@ func (s *PrometheusStorage) SaveMetricData(clusterID, metricName string, data ma
 
 func (s *PrometheusStorage) buildPromLines(metricName string, results []interface{}) []string {
 	var lines []string
-	lines = append(lines, fmt.Sprintf("# TYPE %s gauge", metricName))
+	lines = append(lines, fmt.Sprintf("# TYPE %s %s", metricName, inferMetricType(metricName)))
 	lines = append(lines, "")
 
 	seriesLines := make(map[string][]string)
@@ -529,7 +529,7 @@ func (s *PrometheusStorage) mergeTwoFiles(metricName, path1, path2 string, minTi
 	tmpPath := filePath + ".tmp"
 
 	var lines []string
-	lines = append(lines, fmt.Sprintf("# TYPE %s gauge", metricName))
+	lines = append(lines, fmt.Sprintf("# TYPE %s %s", metricName, inferMetricType(metricName)))
 	lines = append(lines, "")
 
 	var labelKeys []string
