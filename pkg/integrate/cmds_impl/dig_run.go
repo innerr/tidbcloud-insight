@@ -246,6 +246,11 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 		rawLatencyAnomalies := detectRawRollingAnomalies(data.latencyData, analysis.AnomalyLatencySpike, "RawLatencyDetector")
 		timings = append(timings, AlgorithmTiming{Name: "RawLatencyDetector", Duration: time.Since(start)})
 		algorithmResults["RawLatencyDetector"] = rawLatencyAnomalies
+
+		start = time.Now()
+		rawLatencySustained := detectSustainedLatencyDegradation(data.latencyData, "RawLatencySustainedDetector")
+		timings = append(timings, AlgorithmTiming{Name: "RawLatencySustainedDetector", Duration: time.Since(start)})
+		algorithmResults["RawLatencySustainedDetector"] = rawLatencySustained
 	}
 
 	sampleIntervalSec := estimateMedianSampleInterval(data.qpsData)
@@ -459,18 +464,26 @@ func evaluateAnomalyEvidence(
 	}
 
 	if qBase.median < 1.0 {
+		// Low-baseline clusters are noisy in percentage terms; require an absolute
+		// jump (>=5 QPS) to avoid interpreting tiny background variance as incidents.
 		ev.qpsSignal = qEvent.p95 >= maxFloat64(5.0, qBase.p95*3.0)
 	} else {
+		// For normal baseline traffic, require both distribution shift and absolute
+		// median lift so periodic oscillation around baseline does not trigger.
 		ev.qpsSignal = qEvent.p90 > qBase.p95*1.25 &&
 			(qEvent.median-qBase.median) > maxFloat64(0.2, qBase.median*0.15)
 	}
 
 	if latEvent.count >= 3 && latBase.count >= 3 {
+		// Latency spike: relative jump on both tail and high quantile.
 		ev.latSignal = latEvent.p99 > maxFloat64(1.0, latBase.p99*2.5) &&
 			latEvent.p90 > maxFloat64(0.2, latBase.p90*1.8)
 	}
+	// Chronic latency path: if p95 is already >1s and remains significantly above
+	// local baseline, keep it as latency degradation even without sharp spikes.
+	chronicLatency := latEvent.count >= 6 && latEvent.p95 > 1.0 && latEvent.p95 > maxFloat64(1.0, latBase.p95*1.3)
 
-	if !ev.qpsSignal && !ev.latSignal {
+	if !ev.qpsSignal && !ev.latSignal && !chronicLatency {
 		return ev
 	}
 
@@ -480,10 +493,15 @@ func evaluateAnomalyEvidence(
 	case qBase.median < 1.0 && qEvent.p95 >= 5.0:
 		ev.reason = "LOW_BASELINE_BURST"
 		ev.confidence = 0.55
+	case chronicLatency && !ev.qpsSignal:
+		ev.reason = "LATENCY_ONLY_DEGRADATION"
+		ev.confidence = 0.68
 	case ev.latSignal && !ev.qpsSignal:
 		ev.reason = "LATENCY_ONLY_DEGRADATION"
 		ev.confidence = 0.72
 	case ev.qpsSignal && qpsAmplification >= 1.4 && (stmtCorr >= 0.65 || tikvCorr >= 0.5):
+		// Workload-linked shift needs source-level linkage from TiDB statement or
+		// TiKV gRPC trajectories; this avoids labeling isolated QPS spikes as load shifts.
 		ev.reason = "WORKLOAD_LINKED_SHIFT"
 		ev.confidence = 0.74
 	case ev.qpsSignal && ev.latSignal:
@@ -784,6 +802,100 @@ func calculateMADFromSorted(sorted []float64, median float64) float64 {
 	}
 	sort.Float64s(dev)
 	return percentileSorted(dev, 50)
+}
+
+// detectSustainedLatencyDegradation finds long runs where latency stays above
+// an adaptive absolute threshold. This complements spike detectors and catches
+// chronic degradation patterns that rolling z-score may under-detect.
+func detectSustainedLatencyDegradation(
+	values []analysis.TimeSeriesPoint,
+	detectorName string,
+) []analysis.DetectedAnomaly {
+	if len(values) < 60 {
+		return nil
+	}
+	sorted := make([]analysis.TimeSeriesPoint, len(values))
+	copy(sorted, values)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp < sorted[j].Timestamp
+	})
+	all := make([]float64, 0, len(sorted))
+	for _, p := range sorted {
+		all = append(all, p.Value)
+	}
+	sort.Float64s(all)
+	globalP50 := percentileSorted(all, 50)
+	globalP75 := percentileSorted(all, 75)
+	globalP99 := percentileSorted(all, 99)
+	// Threshold combines absolute floor (1s) and adaptive baseline multipliers.
+	// p50*8 and p75*3 were chosen to capture persistent regressions while filtering
+	// normal long-tail variation in light/medium traffic clusters.
+	threshold := maxFloat64(1.0, maxFloat64(globalP50*8.0, globalP75*3.0))
+	if globalP99 > threshold*5 {
+		threshold = maxFloat64(1.0, threshold*1.5)
+	}
+
+	step := estimateMedianSampleInterval(sorted)
+	minPoints := 6
+	var out []analysis.DetectedAnomaly
+	start := int64(0)
+	end := int64(0)
+	pointCount := 0
+	maxLatency := 0.0
+
+	flush := func() {
+		if pointCount < minPoints {
+			return
+		}
+		conf := 0.72
+		if maxLatency >= threshold*1.8 {
+			conf = 0.85
+		}
+		out = append(out, analysis.DetectedAnomaly{
+			Type:       analysis.AnomalyLatencyDegraded,
+			Severity:   analysis.SeverityHigh,
+			Timestamp:  start,
+			EndTime:    end,
+			Duration:   calculateEventDurationSec(start, end, step),
+			Value:      maxLatency,
+			Baseline:   globalP75,
+			Confidence: conf,
+			DetectedBy: []string{detectorName},
+			Detail:     "raw_sustained_latency_detector",
+		})
+	}
+
+	for _, p := range sorted {
+		if p.Value >= threshold {
+			if pointCount == 0 {
+				start = p.Timestamp
+				end = p.Timestamp
+				pointCount = 1
+				maxLatency = p.Value
+				continue
+			}
+			if p.Timestamp-end <= step*3 {
+				end = p.Timestamp
+				pointCount++
+				if p.Value > maxLatency {
+					maxLatency = p.Value
+				}
+				continue
+			}
+			flush()
+			start = p.Timestamp
+			end = p.Timestamp
+			pointCount = 1
+			maxLatency = p.Value
+			continue
+		}
+		if pointCount > 0 && p.Timestamp-end > step*3 {
+			flush()
+			pointCount = 0
+		}
+	}
+	flush()
+	return out
 }
 
 func compactContiguousAnomalies(anomalies []analysis.DetectedAnomaly, mergeGapSec, sampleIntervalSec int64) []analysis.DetectedAnomaly {
