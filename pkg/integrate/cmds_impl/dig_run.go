@@ -469,12 +469,25 @@ func validateAndExplainAnomalies(
 		}
 
 		a.Confidence = ev.confidence
+		applyReasonToAnomalyType(&a, ev.reason)
 		a.Detail = fmt.Sprintf(
 			"reason=%s qps_p95=%.3f base_qps_median=%.3f lat_p99=%.3fs base_lat_p99=%.3fs corr(stmt)=%.2f corr(tikv)=%.2f",
 			ev.reason, ev.qpsEventP95, ev.qpsBaseMed, ev.latEventP99, ev.latBaseP99, ev.stmtCorr, ev.tikvCorr)
 		out = append(out, a)
 	}
 	return out
+}
+
+// applyReasonToAnomalyType aligns final event type with evidence reason so the
+// reported anomaly category matches root-cause interpretation.
+func applyReasonToAnomalyType(a *analysis.DetectedAnomaly, reason string) {
+	if a == nil {
+		return
+	}
+	switch reason {
+	case "LATENCY_ONLY_DEGRADATION", "BACKEND_LATENCY_DEGRADATION":
+		a.Type = analysis.AnomalyLatencyDegraded
+	}
 }
 
 // isLikelyDiurnalRepeat detects whether current event level is close to the
