@@ -501,3 +501,42 @@ func TestApplyReasonToAnomalyType(t *testing.T) {
 		t.Fatalf("expected LATENCY_DEGRADED, got %s", a.Type)
 	}
 }
+
+func TestApplyReasonToAnomalyMeasurement_UsesLatencyForLatencyReason(t *testing.T) {
+	a := analysis.DetectedAnomaly{Value: 100, Baseline: 90}
+	ev := anomalyEvidence{
+		reason:      "LATENCY_ONLY_DEGRADATION",
+		latEventP99: 1.8,
+		latBaseP99:  0.3,
+	}
+	applyReasonToAnomalyMeasurement(&a, ev)
+	if a.Value != 1.8 || a.Baseline != 0.3 {
+		t.Fatalf("expected latency measurement applied, got value=%.3f baseline=%.3f", a.Value, a.Baseline)
+	}
+}
+
+func TestApplyReasonToAnomalyMeasurement_UsesQPSForDefaultReason(t *testing.T) {
+	a := analysis.DetectedAnomaly{Value: 10, Baseline: 8}
+	ev := anomalyEvidence{
+		reason:      "WORKLOAD_LINKED_SHIFT",
+		qpsEventP95: 220,
+		qpsBaseMed:  110,
+	}
+	applyReasonToAnomalyMeasurement(&a, ev)
+	if a.Value != 220 || a.Baseline != 110 {
+		t.Fatalf("expected qps measurement applied, got value=%.3f baseline=%.3f", a.Value, a.Baseline)
+	}
+}
+
+func TestApplyReasonToAnomalyMeasurement_DoesNotOverrideLatencyWhenNotWorse(t *testing.T) {
+	a := analysis.DetectedAnomaly{Value: 2.0, Baseline: 1.0}
+	ev := anomalyEvidence{
+		reason:      "LATENCY_ONLY_DEGRADATION",
+		latEventP99: 0.9,
+		latBaseP99:  1.0,
+	}
+	applyReasonToAnomalyMeasurement(&a, ev)
+	if a.Value != 2.0 || a.Baseline != 1.0 {
+		t.Fatalf("expected original measurement kept, got value=%.3f baseline=%.3f", a.Value, a.Baseline)
+	}
+}
