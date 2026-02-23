@@ -469,6 +469,7 @@ func validateAndExplainAnomalies(
 		}
 
 		a.Confidence = ev.confidence
+		applyReasonToAnomalyMeasurement(&a, ev)
 		applyReasonToAnomalyType(&a, ev.reason)
 		a.Detail = fmt.Sprintf(
 			"reason=%s qps_p95=%.3f base_qps_median=%.3f lat_p99=%.3fs base_lat_p99=%.3fs corr(stmt)=%.2f corr(tikv)=%.2f",
@@ -487,6 +488,30 @@ func applyReasonToAnomalyType(a *analysis.DetectedAnomaly, reason string) {
 	switch reason {
 	case "LATENCY_ONLY_DEGRADATION", "BACKEND_LATENCY_DEGRADATION":
 		a.Type = analysis.AnomalyLatencyDegraded
+	}
+}
+
+// applyReasonToAnomalyMeasurement rewrites Value/Baseline using evidence windows
+// so output percentage reflects the same signal used for root-cause labeling.
+func applyReasonToAnomalyMeasurement(a *analysis.DetectedAnomaly, ev anomalyEvidence) {
+	if a == nil {
+		return
+	}
+	switch ev.reason {
+	case "LATENCY_ONLY_DEGRADATION", "BACKEND_LATENCY_DEGRADATION":
+		// Only override when evidence shows clear worsening; otherwise keep
+		// original detector measurement to avoid contradictory negative deltas.
+		if ev.latEventP99 > 0 && ev.latBaseP99 > 0 && ev.latEventP99 > ev.latBaseP99*1.02 {
+			a.Value = ev.latEventP99
+			a.Baseline = ev.latBaseP99
+		}
+	default:
+		if ev.qpsEventP95 > 0 {
+			a.Value = ev.qpsEventP95
+		}
+		if ev.qpsBaseMed > 0 {
+			a.Baseline = ev.qpsBaseMed
+		}
 	}
 }
 
