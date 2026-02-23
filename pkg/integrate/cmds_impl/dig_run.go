@@ -41,8 +41,10 @@ type DigResult struct {
 }
 
 type metricsData struct {
-	qpsData     []analysis.TimeSeriesPoint
-	latencyData []analysis.TimeSeriesPoint
+	qpsData       []analysis.TimeSeriesPoint
+	latencyData   []analysis.TimeSeriesPoint
+	statementData []analysis.TimeSeriesPoint
+	tikvGRPCData  []analysis.TimeSeriesPoint
 }
 
 func loadMetricsData(cacheDir, clusterID string, startTS, endTS int64) (*metricsData, error) {
@@ -58,9 +60,21 @@ func loadMetricsData(cacheDir, clusterID string, startTS, endTS int64) (*metrics
 		fmt.Printf("Warning: failed to load latency data: %v\n", err)
 	}
 
+	statementData, err := loadMetricTimeSeries(promStorage, clusterID, "tidb_executor_statement_total", startTS, endTS)
+	if err != nil {
+		fmt.Printf("Warning: failed to load statement data: %v\n", err)
+	}
+
+	tikvGRPCData, err := loadMetricTimeSeries(promStorage, clusterID, "tikv_grpc_msg_duration_seconds_count", startTS, endTS)
+	if err != nil {
+		fmt.Printf("Warning: failed to load TiKV gRPC data: %v\n", err)
+	}
+
 	return &metricsData{
-		qpsData:     qpsData,
-		latencyData: latencyData,
+		qpsData:       qpsData,
+		latencyData:   latencyData,
+		statementData: statementData,
+		tikvGRPCData:  tikvGRPCData,
 	}, nil
 }
 
@@ -222,6 +236,18 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	timings = append(timings, AlgorithmTiming{Name: "PeakDetector", Duration: time.Since(start)})
 	algorithmResults["PeakDetector"] = peakAnomalies
 
+	start = time.Now()
+	rawQPSAnomalies := detectRawRollingAnomalies(data.qpsData, analysis.AnomalyQPSSpike, "RawQPSDetector")
+	timings = append(timings, AlgorithmTiming{Name: "RawQPSDetector", Duration: time.Since(start)})
+	algorithmResults["RawQPSDetector"] = rawQPSAnomalies
+
+	if len(data.latencyData) > 0 {
+		start = time.Now()
+		rawLatencyAnomalies := detectRawRollingAnomalies(data.latencyData, analysis.AnomalyLatencySpike, "RawLatencyDetector")
+		timings = append(timings, AlgorithmTiming{Name: "RawLatencyDetector", Duration: time.Since(start)})
+		algorithmResults["RawLatencyDetector"] = rawLatencyAnomalies
+	}
+
 	sampleIntervalSec := estimateMedianSampleInterval(data.qpsData)
 
 	mergeConfig := analysis.DefaultAnomalyMergerConfig()
@@ -237,11 +263,14 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	mergeGapSec := calculateDynamicEventGap(merged.Anomalies, sampleIntervalSec)
 	mergedAnomalies := compactContiguousAnomalies(merged.Anomalies, mergeGapSec, sampleIntervalSec)
 	mergedAnomalies = mergeNearbyEventsByCadence(mergedAnomalies, sampleIntervalSec)
+	mergedAnomalies = validateAndExplainAnomalies(mergedAnomalies, data, sampleIntervalSec)
+	summary := merged.Summary
+	summary.TotalAnomalies = len(mergedAnomalies)
 
 	result := &DigAbnormalResult{
 		ClusterID: clusterID,
 		Anomalies: mergedAnomalies,
-		Summary:   &merged.Summary,
+		Summary:   &summary,
 		Timings:   timings,
 	}
 
@@ -319,6 +348,442 @@ func estimateMedianSampleInterval(values []analysis.TimeSeriesPoint) int64 {
 		return 900
 	}
 	return median
+}
+
+type windowStats struct {
+	count   int
+	mean    float64
+	median  float64
+	p90     float64
+	p95     float64
+	p99     float64
+	max     float64
+	min     float64
+	zeroRat float64
+}
+
+type anomalyEvidence struct {
+	reason      string
+	confidence  float64
+	keep        bool
+	qpsSignal   bool
+	latSignal   bool
+	qpsBaseMed  float64
+	qpsEventP95 float64
+	latBaseP99  float64
+	latEventP99 float64
+	stmtCorr    float64
+	tikvCorr    float64
+}
+
+// validateAndExplainAnomalies performs a source-data verification pass:
+// 1) Treat detector output as candidates only.
+// 2) Re-check each candidate against raw metric windows (QPS/latency + side signals).
+// 3) Keep only events with measurable source-level evidence.
+// This avoids trusting model output in low-baseline or data-poor scenarios.
+func validateAndExplainAnomalies(
+	anomalies []analysis.DetectedAnomaly,
+	data *metricsData,
+	sampleIntervalSec int64,
+) []analysis.DetectedAnomaly {
+	if len(anomalies) == 0 || data == nil {
+		return anomalies
+	}
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 120
+	}
+
+	var out []analysis.DetectedAnomaly
+	for _, a := range anomalies {
+		endTS := a.EndTime
+		if endTS <= a.Timestamp {
+			endTS = a.Timestamp
+		}
+		// Use a fixed-length baseline window before the event to compare local behavior,
+		// so daily pattern and long-term drift do not dominate anomaly decisions.
+		baseLenSec := int64(6 * 3600)
+		if d := endTS - a.Timestamp; d > 0 && d < baseLenSec {
+			baseLenSec = maxInt64(3600, d*3)
+		}
+		baseEnd := a.Timestamp - sampleIntervalSec
+		baseStart := baseEnd - baseLenSec
+		if baseEnd <= baseStart {
+			baseStart = a.Timestamp - maxInt64(3600, sampleIntervalSec*30)
+			baseEnd = a.Timestamp - sampleIntervalSec
+		}
+
+		qBase := calcWindowStats(data.qpsData, baseStart, baseEnd)
+		qEvent := calcWindowStats(data.qpsData, a.Timestamp, endTS)
+		latBase := calcWindowStats(data.latencyData, baseStart, baseEnd)
+		latEvent := calcWindowStats(data.latencyData, a.Timestamp, endTS)
+
+		stmtCorr := calcWindowCorrelation(data.qpsData, data.statementData, a.Timestamp, endTS)
+		tikvCorr := calcWindowCorrelation(data.qpsData, data.tikvGRPCData, a.Timestamp, endTS)
+
+		ev := evaluateAnomalyEvidence(qBase, qEvent, latBase, latEvent, stmtCorr, tikvCorr)
+		if !ev.keep {
+			continue
+		}
+
+		a.Confidence = ev.confidence
+		a.Detail = fmt.Sprintf(
+			"reason=%s qps_p95=%.3f base_qps_median=%.3f lat_p99=%.3fs base_lat_p99=%.3fs corr(stmt)=%.2f corr(tikv)=%.2f",
+			ev.reason, ev.qpsEventP95, ev.qpsBaseMed, ev.latEventP99, ev.latBaseP99, ev.stmtCorr, ev.tikvCorr)
+		out = append(out, a)
+	}
+	return out
+}
+
+// evaluateAnomalyEvidence labels anomaly cause with explicit source-signal rules.
+// Design goals:
+// - suppress low-baseline false positives,
+// - keep workload-linked shifts with multi-metric support,
+// - keep latency-only degradations even when QPS is stable.
+func evaluateAnomalyEvidence(
+	qBase, qEvent, latBase, latEvent windowStats,
+	stmtCorr, tikvCorr float64,
+) anomalyEvidence {
+	ev := anomalyEvidence{
+		reason:      "MIXED_OR_UNCERTAIN",
+		confidence:  0.35,
+		keep:        false,
+		qpsBaseMed:  qBase.median,
+		qpsEventP95: qEvent.p95,
+		latBaseP99:  latBase.p99,
+		latEventP99: latEvent.p99,
+		stmtCorr:    stmtCorr,
+		tikvCorr:    tikvCorr,
+	}
+	if qEvent.count < 3 {
+		return ev
+	}
+
+	if qBase.median < 1.0 {
+		ev.qpsSignal = qEvent.p95 >= maxFloat64(5.0, qBase.p95*3.0)
+	} else {
+		ev.qpsSignal = qEvent.p90 > qBase.p95*1.25 &&
+			(qEvent.median-qBase.median) > maxFloat64(0.2, qBase.median*0.15)
+	}
+
+	if latEvent.count >= 3 && latBase.count >= 3 {
+		ev.latSignal = latEvent.p99 > maxFloat64(1.0, latBase.p99*2.5) &&
+			latEvent.p90 > maxFloat64(0.2, latBase.p90*1.8)
+	}
+
+	if !ev.qpsSignal && !ev.latSignal {
+		return ev
+	}
+
+	qpsAmplification := (qEvent.p95 + 1e-9) / (qBase.p95 + 1e-9)
+	ev.keep = true
+	switch {
+	case qBase.median < 1.0 && qEvent.p95 >= 5.0:
+		ev.reason = "LOW_BASELINE_BURST"
+		ev.confidence = 0.55
+	case ev.latSignal && !ev.qpsSignal:
+		ev.reason = "LATENCY_ONLY_DEGRADATION"
+		ev.confidence = 0.72
+	case ev.qpsSignal && qpsAmplification >= 1.4 && (stmtCorr >= 0.65 || tikvCorr >= 0.5):
+		ev.reason = "WORKLOAD_LINKED_SHIFT"
+		ev.confidence = 0.74
+	case ev.qpsSignal && ev.latSignal:
+		ev.reason = "LOAD_AND_LATENCY_COUPLED"
+		ev.confidence = 0.74
+	case ev.qpsSignal && qpsAmplification >= 1.8:
+		ev.reason = "MIXED_OR_UNCERTAIN"
+		ev.confidence = 0.56
+	default:
+		ev.keep = false
+		return ev
+	}
+
+	if isFinite(stmtCorr) && stmtCorr > 0.9 {
+		ev.confidence += 0.04
+	}
+	if isFinite(tikvCorr) && tikvCorr > 0.8 {
+		ev.confidence += 0.04
+	}
+	if ev.confidence > 0.95 {
+		ev.confidence = 0.95
+	}
+	return ev
+}
+
+func calcWindowStats(values []analysis.TimeSeriesPoint, startTS, endTS int64) windowStats {
+	if len(values) == 0 || endTS < startTS {
+		return windowStats{}
+	}
+	startIdx := sort.Search(len(values), func(i int) bool {
+		return values[i].Timestamp >= startTS
+	})
+	var sample []float64
+	zeroCnt := 0
+	sum := 0.0
+	minV := math.MaxFloat64
+	maxV := -math.MaxFloat64
+	for i := startIdx; i < len(values) && values[i].Timestamp <= endTS; i++ {
+		v := values[i].Value
+		sample = append(sample, v)
+		sum += v
+		if v == 0 {
+			zeroCnt++
+		}
+		if v < minV {
+			minV = v
+		}
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if len(sample) == 0 {
+		return windowStats{}
+	}
+	sort.Float64s(sample)
+	return windowStats{
+		count:   len(sample),
+		mean:    sum / float64(len(sample)),
+		median:  percentileSorted(sample, 50),
+		p90:     percentileSorted(sample, 90),
+		p95:     percentileSorted(sample, 95),
+		p99:     percentileSorted(sample, 99),
+		max:     maxV,
+		min:     minV,
+		zeroRat: float64(zeroCnt) / float64(len(sample)),
+	}
+}
+
+func calcWindowCorrelation(
+	a []analysis.TimeSeriesPoint,
+	b []analysis.TimeSeriesPoint,
+	startTS, endTS int64,
+) float64 {
+	if len(a) == 0 || len(b) == 0 || endTS < startTS {
+		return math.NaN()
+	}
+	bMap := make(map[int64]float64, len(b))
+	for _, p := range b {
+		if p.Timestamp >= startTS && p.Timestamp <= endTS {
+			bMap[p.Timestamp] = p.Value
+		}
+	}
+	var xs, ys []float64
+	for _, p := range a {
+		if p.Timestamp < startTS || p.Timestamp > endTS {
+			continue
+		}
+		if y, ok := bMap[p.Timestamp]; ok {
+			xs = append(xs, p.Value)
+			ys = append(ys, y)
+		}
+	}
+	if len(xs) < 3 {
+		return math.NaN()
+	}
+	meanX, meanY := 0.0, 0.0
+	for i := range xs {
+		meanX += xs[i]
+		meanY += ys[i]
+	}
+	meanX /= float64(len(xs))
+	meanY /= float64(len(xs))
+
+	cov, varX, varY := 0.0, 0.0, 0.0
+	for i := range xs {
+		dx := xs[i] - meanX
+		dy := ys[i] - meanY
+		cov += dx * dy
+		varX += dx * dx
+		varY += dy * dy
+	}
+	if varX == 0 || varY == 0 {
+		return math.NaN()
+	}
+	return cov / math.Sqrt(varX*varY)
+}
+
+func percentileSorted(sorted []float64, p int) float64 {
+	if len(sorted) == 0 {
+		return math.NaN()
+	}
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	idx := (len(sorted) - 1) * p / 100
+	return sorted[idx]
+}
+
+func maxFloat64(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+// detectRawRollingAnomalies detects anomalies directly from source time-series
+// using rolling median + MAD. This detector does not depend on model-specific
+// assumptions and is intended as a robust candidate generator.
+func detectRawRollingAnomalies(
+	values []analysis.TimeSeriesPoint,
+	anomalyType analysis.AnomalyType,
+	detectorName string,
+) []analysis.DetectedAnomaly {
+	if len(values) < 80 {
+		return nil
+	}
+	sorted := make([]analysis.TimeSeriesPoint, len(values))
+	copy(sorted, values)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp < sorted[j].Timestamp
+	})
+
+	overall := make([]float64, 0, len(sorted))
+	for _, p := range sorted {
+		overall = append(overall, p.Value)
+	}
+	sort.Float64s(overall)
+	globalMedian := percentileSorted(overall, 50)
+	minDelta := maxFloat64(0.2, globalMedian*0.10)
+	if anomalyType == analysis.AnomalyLatencySpike {
+		minDelta = maxFloat64(0.02, globalMedian*0.50)
+	}
+	if globalMedian < 1 && anomalyType == analysis.AnomalyQPSSpike {
+		minDelta = 5.0
+	}
+
+	step := estimateMedianSampleInterval(sorted)
+	window := 60
+	if len(sorted) < window+5 {
+		window = len(sorted) / 2
+	}
+	if window < 10 {
+		return nil
+	}
+
+	type pointCandidate struct {
+		ts       int64
+		value    float64
+		baseline float64
+		zScore   float64
+		severity analysis.Severity
+	}
+	var candidates []pointCandidate
+
+	for i := window; i < len(sorted); i++ {
+		w := make([]float64, 0, window)
+		for j := i - window; j < i; j++ {
+			w = append(w, sorted[j].Value)
+		}
+		sort.Float64s(w)
+		med := percentileSorted(w, 50)
+		mad := calculateMADFromSorted(w, med)
+		sigma := 1.4826*mad + 1e-9
+		delta := sorted[i].Value - med
+		z := delta / sigma
+		if anomalyType == analysis.AnomalyQPSSpike || anomalyType == analysis.AnomalyLatencySpike {
+			if delta < minDelta {
+				continue
+			}
+		}
+		if math.Abs(z) < 6.0 {
+			continue
+		}
+		severity := analysis.SeverityMedium
+		if math.Abs(z) >= 12 {
+			severity = analysis.SeverityCritical
+		} else if math.Abs(z) >= 9 {
+			severity = analysis.SeverityHigh
+		}
+		candidates = append(candidates, pointCandidate{
+			ts:       sorted[i].Timestamp,
+			value:    sorted[i].Value,
+			baseline: med,
+			zScore:   z,
+			severity: severity,
+		})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	var out []analysis.DetectedAnomaly
+	current := candidates[0]
+	endTS := current.ts
+	maxAbsZ := math.Abs(current.zScore)
+	maxValue := current.value
+	baseline := current.baseline
+	severity := current.severity
+	pointCount := 1
+
+	flush := func() {
+		if pointCount < 3 {
+			return
+		}
+		durationSec := calculateEventDurationSec(current.ts, endTS, step)
+		conf := 0.55 + math.Min(0.35, maxAbsZ/30.0)
+		if conf > 0.95 {
+			conf = 0.95
+		}
+		out = append(out, analysis.DetectedAnomaly{
+			Type:       anomalyType,
+			Severity:   severity,
+			Timestamp:  current.ts,
+			EndTime:    endTS,
+			Duration:   durationSec,
+			Value:      maxValue,
+			Baseline:   baseline,
+			ZScore:     maxAbsZ,
+			Confidence: conf,
+			DetectedBy: []string{detectorName},
+			Detail:     "raw_rolling_mad_detector",
+		})
+	}
+
+	for i := 1; i < len(candidates); i++ {
+		next := candidates[i]
+		if next.ts-endTS <= step*3 {
+			endTS = next.ts
+			pointCount++
+			if absFloat(next.zScore) > maxAbsZ {
+				maxAbsZ = absFloat(next.zScore)
+				maxValue = next.value
+				baseline = next.baseline
+			}
+			if next.severity == analysis.SeverityCritical ||
+				(next.severity == analysis.SeverityHigh && severity != analysis.SeverityCritical) {
+				severity = next.severity
+			}
+			continue
+		}
+		flush()
+		current = next
+		endTS = next.ts
+		maxAbsZ = absFloat(next.zScore)
+		maxValue = next.value
+		baseline = next.baseline
+		severity = next.severity
+		pointCount = 1
+	}
+	flush()
+	return out
+}
+
+func calculateMADFromSorted(sorted []float64, median float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	dev := make([]float64, len(sorted))
+	for i, v := range sorted {
+		dev[i] = math.Abs(v - median)
+	}
+	sort.Float64s(dev)
+	return percentileSorted(dev, 50)
 }
 
 func compactContiguousAnomalies(anomalies []analysis.DetectedAnomaly, mergeGapSec, sampleIntervalSec int64) []analysis.DetectedAnomaly {
@@ -1345,7 +1810,7 @@ func printAbnormalResult(result *DigAbnormalResult) {
 	}
 	if result.Summary != nil {
 		fmt.Println()
-		fmt.Printf("Merged anomaly events: %d (window=%ds)\n", result.Summary.TotalAnomalies, result.Summary.MergeWindowSec)
+		fmt.Printf("Merged anomaly events: %d (window=%ds)\n", len(result.Anomalies), result.Summary.MergeWindowSec)
 	}
 	printSummaryWithTimings(result.ClusterID, result.Timings)
 }
@@ -1388,14 +1853,34 @@ func printAnomalyLine(a analysis.DetectedAnomaly) {
 	change := formatChange(a.Value, a.Baseline)
 	confBar := formatConfidenceBar(a.Confidence)
 	algos := strings.Join(a.DetectedBy, ",")
+	reason := extractAnomalyReason(a.Detail)
+	if reason == "" {
+		reason = "UNSPECIFIED"
+	}
 
 	duration := ""
 	if a.Duration > 0 {
 		duration = " (" + formatAnomalyDuration(int(a.Duration)) + ")"
 	}
 
-	fmt.Printf("%-10s %s  %-25s %-12s %s %s%s\n",
-		severity, timeRange, a.Type, change, confBar, algos, duration)
+	fmt.Printf("%-10s %s  %-25s %-12s %s %-24s %s%s\n",
+		severity, timeRange, a.Type, change, confBar, reason, algos, duration)
+}
+
+func extractAnomalyReason(detail string) string {
+	if detail == "" {
+		return ""
+	}
+	idx := strings.Index(detail, "reason=")
+	if idx < 0 {
+		return ""
+	}
+	rest := detail[idx+len("reason="):]
+	end := strings.IndexAny(rest, " ,")
+	if end < 0 {
+		return rest
+	}
+	return rest[:end]
 }
 
 func formatSeverityColored(s analysis.Severity) string {
