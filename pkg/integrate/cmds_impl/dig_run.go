@@ -478,6 +478,29 @@ func validateAndExplainAnomalies(
 				continue
 			}
 		}
+		if ev.reason == "LATENCY_ONLY_DEGRADATION" || ev.reason == "BACKEND_LATENCY_DEGRADATION" {
+			// For long latency incidents, require enough high-latency coverage and
+			// tighten bounds to high-latency span so sparse fragments do not appear
+			// as a continuous multi-hour degradation.
+			highThreshold := maxFloat64(ev.latBaseP99*1.25, ev.latBaseP99+0.05)
+			if highThreshold < 0.2 {
+				highThreshold = 0.2
+			}
+			coverage, firstHighTS, lastHighTS := calculateHighValueCoverage(
+				data.latencyData,
+				a.Timestamp,
+				endTS,
+				highThreshold,
+			)
+			if endTS-a.Timestamp+sampleIntervalSec >= 2*3600 && coverage < 0.42 {
+				continue
+			}
+			if firstHighTS > 0 && lastHighTS >= firstHighTS {
+				a.Timestamp = firstHighTS
+				a.EndTime = lastHighTS
+				a.Duration = calculateEventDurationSec(a.Timestamp, a.EndTime, sampleIntervalSec)
+			}
+		}
 
 		a.Confidence = ev.confidence
 		applyReasonToAnomalyMeasurement(&a, ev)
@@ -627,6 +650,11 @@ func evaluateAnomalyEvidence(
 	if eventDurationSec >= 2*3600 && ev.qpsSignal && !ev.latSignal && qEvent.zeroRat >= 0.60 {
 		return ev
 	}
+	// Long coupled events must also satisfy strong workload linkage; otherwise
+	// they are usually cadence-merged artifacts with weak source correlation.
+	if eventDurationSec >= 2*3600 && ev.qpsSignal && ev.latSignal && !workloadLinkedEvidence {
+		return ev
+	}
 
 	ev.keep = true
 	switch {
@@ -766,6 +794,37 @@ func calcWindowCorrelation(
 		return math.NaN()
 	}
 	return cov / math.Sqrt(varX*varY)
+}
+
+// calculateHighValueCoverage returns coverage ratio and first/last high-value
+// timestamp in [startTS, endTS].
+func calculateHighValueCoverage(
+	values []analysis.TimeSeriesPoint,
+	startTS, endTS int64,
+	threshold float64,
+) (coverage float64, firstHighTS int64, lastHighTS int64) {
+	if len(values) == 0 || endTS < startTS {
+		return 0, 0, 0
+	}
+	startIdx := sort.Search(len(values), func(i int) bool {
+		return values[i].Timestamp >= startTS
+	})
+	total := 0
+	high := 0
+	for i := startIdx; i < len(values) && values[i].Timestamp <= endTS; i++ {
+		total++
+		if values[i].Value >= threshold {
+			high++
+			if firstHighTS == 0 {
+				firstHighTS = values[i].Timestamp
+			}
+			lastHighTS = values[i].Timestamp
+		}
+	}
+	if total == 0 {
+		return 0, 0, 0
+	}
+	return float64(high) / float64(total), firstHighTS, lastHighTS
 }
 
 func percentileSorted(sorted []float64, p int) float64 {
