@@ -14,4 +14,3 @@ func inferMetricType(metricName string) string {
 		return "gauge"
 	}
 }
-

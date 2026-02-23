@@ -636,11 +636,11 @@ func parsePromFileForHistogram(filePath string, startTS, endTS int64, dataByTs m
 			continue
 		}
 
-			if dataByTs[ts] == nil {
-				dataByTs[ts] = make(map[string]float64)
-			}
-			dataByTs[ts][le] += value
+		if dataByTs[ts] == nil {
+			dataByTs[ts] = make(map[string]float64)
 		}
+		dataByTs[ts][le] += value
+	}
 
 	return scanner.Err()
 }
