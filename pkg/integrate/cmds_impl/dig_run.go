@@ -607,6 +607,12 @@ func evaluateAnomalyEvidence(
 	case ev.qpsSignal && ev.latSignal:
 		ev.reason = "LOAD_AND_LATENCY_COUPLED"
 		ev.confidence = 0.74
+	case ev.qpsSignal &&
+		eventDurationSec <= 2*3600 &&
+		qEvent.p95 > qBase.p95*1.8 &&
+		qEvent.median > maxFloat64(qBase.median*1.8, qBase.median+10.0):
+		ev.reason = "SHORT_INTENSE_BURST"
+		ev.confidence = 0.70
 	case ev.qpsSignal && qpsAmplification >= 1.8:
 		ev.reason = "MIXED_OR_UNCERTAIN"
 		ev.confidence = 0.56

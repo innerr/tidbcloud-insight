@@ -432,6 +432,25 @@ func TestEvaluateAnomalyEvidence_LongSparseWindowIsFiltered(t *testing.T) {
 	}
 }
 
+func TestEvaluateAnomalyEvidence_ShortIntenseBurst(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 50, p95: 60},
+		windowStats{count: 20, median: 120, p90: 180, p95: 220},
+		windowStats{count: 10, median: 55},
+		windowStats{count: 10, median: 130},
+		windowStats{count: 40, p90: 0.03, p99: 0.08},
+		windowStats{count: 20, p90: 0.03, p99: 0.09},
+		windowStats{},
+		windowStats{},
+		0.20,
+		0.10,
+		90*60,
+	)
+	if !ev.keep || ev.reason != "SHORT_INTENSE_BURST" {
+		t.Fatalf("expected SHORT_INTENSE_BURST, got keep=%v reason=%s", ev.keep, ev.reason)
+	}
+}
+
 func TestIsLikelyDiurnalRepeat_TrueWhenQPSAndLatencySimilar(t *testing.T) {
 	ok := isLikelyDiurnalRepeat(
 		windowStats{count: 12, p90: 180, p95: 200},
