@@ -413,6 +413,25 @@ func TestEvaluateAnomalyEvidence_LongShiftWithEdgeIsKept(t *testing.T) {
 	}
 }
 
+func TestEvaluateAnomalyEvidence_LongSparseWindowIsFiltered(t *testing.T) {
+	ev := evaluateAnomalyEvidence(
+		windowStats{count: 40, median: 100, p95: 120},
+		windowStats{count: 20, median: 180, p90: 190, p95: 200, zeroRat: 0.75},
+		windowStats{count: 10, median: 110},
+		windowStats{count: 10, median: 170},
+		windowStats{count: 40, p90: 0.03, p99: 0.08},
+		windowStats{count: 20, p90: 0.03, p99: 0.09},
+		windowStats{},
+		windowStats{},
+		0.82,
+		0.73,
+		3*3600,
+	)
+	if ev.keep {
+		t.Fatalf("expected long sparse window to be filtered, got keep=true reason=%s", ev.reason)
+	}
+}
+
 func TestIsLikelyDiurnalRepeat_TrueWhenQPSAndLatencySimilar(t *testing.T) {
 	ok := isLikelyDiurnalRepeat(
 		windowStats{count: 12, p90: 180, p95: 200},
