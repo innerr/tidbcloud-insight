@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"tidbcloud-insight/pkg/lock"
 	"tidbcloud-insight/pkg/prometheus_storage"
 )
 
@@ -384,6 +385,20 @@ func loadClustersFromList(metaDir, bizType string) ([]clusterInfo, error) {
 
 func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
 	startTS, endTS int64, config MetricsFetcherConfig) error {
+
+	lockPath := filepath.Join(cacheDir, "metrics.fetch.all.lock")
+	fl, err := lock.TryLock(lockPath)
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock: %w (another fetch.all may be running)", err)
+	}
+	defer fl.Unlock()
+
+	cleaned, err := lock.CleanupTempFiles(cacheDir)
+	if err != nil {
+		fmt.Printf("Warning: failed to cleanup temp files: %v\n", err)
+	} else if cleaned > 0 {
+		fmt.Printf("Cleaned %d temp files\n", cleaned)
+	}
 
 	inactive := loadInactiveClusters(cacheDir)
 	if len(inactive) > 0 {
