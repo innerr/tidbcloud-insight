@@ -13,9 +13,14 @@ LDFLAGS := -ldflags "-s -w \
 	-X main.DirtyHash=$(DIRTY_HASH) \
 	-X main.BuildTime=$(BUILD_TIME)"
 
+GOLANGCI_LINT := $(shell go env GOPATH)/bin/golangci-lint
+
 .PHONY: all build clean test lint fmt vet install run
 
 all: build
+
+$(GOLANGCI_LINT):
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 build:
 	go build $(LDFLAGS) -o bin/$(APP_NAME) ./pkg/main
@@ -29,8 +34,8 @@ run:
 test:
 	go test -v ./...
 
-lint:
-	golangci-lint run
+lint: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) run
 
 fmt:
 	go fmt ./...
