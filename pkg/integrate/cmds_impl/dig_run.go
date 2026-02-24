@@ -105,6 +105,19 @@ func DigProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Durat
 	if err != nil {
 		return err
 	}
+	if len(data.qpsData) == 0 {
+		if fallbackStart, fallbackEnd, ok := inferLatestCachedMetricRange(cacheDir, clusterID, "tidb_server_query_total"); ok {
+			if fallbackStart != startTS || fallbackEnd != endTS {
+				fmt.Printf("No QPS in requested range, fallback to cached range: %s ~ %s\n",
+					time.Unix(fallbackStart, 0).Format("2006-01-02 15:04:05"),
+					time.Unix(fallbackEnd, 0).Format("2006-01-02 15:04:05"))
+				data, err = loadMetricsData(cacheDir, clusterID, fallbackStart, fallbackEnd)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
 
 	fmt.Printf("Loaded %d QPS data points\n", len(data.qpsData))
 	if len(data.latencyData) > 0 {
