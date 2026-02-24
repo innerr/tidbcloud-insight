@@ -17,12 +17,20 @@ const (
 
 type AuthManager = auth.Manager
 
+type ConcurrencyConfig struct {
+	DesiredConcurrency  int
+	RecoveryInterval    time.Duration
+	MinRecoveryInterval time.Duration
+}
+
 type ClientParams struct {
 	FetchTimeout time.Duration
 	IdleTimeout  time.Duration
 	DisplayVerb  bool
+	Concurrency  ConcurrencyConfig
 }
 
 func NewClient(cacheDir string, cp ClientParams, authMgr *auth.Manager) (*client.Client, error) {
-	return client.NewClientWithAuth(cacheDir, cp.FetchTimeout, cp.IdleTimeout, cp.DisplayVerb, authMgr)
+	return client.NewClientWithAuthAndConcurrencyConfig(cacheDir, cp.FetchTimeout, cp.IdleTimeout, cp.DisplayVerb,
+		cp.Concurrency.DesiredConcurrency, cp.Concurrency.RecoveryInterval, cp.Concurrency.MinRecoveryInterval, authMgr)
 }

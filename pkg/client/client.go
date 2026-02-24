@@ -83,15 +83,41 @@ type Client struct {
 }
 
 func NewClientWithAuth(cacheDir string, fetchTimeout, idleTimeout time.Duration, displayVerb bool, authMgr *auth.Manager) (*Client, error) {
+	return NewClientWithAuthAndConcurrencyConfig(cacheDir, fetchTimeout, idleTimeout, displayVerb, 0, 0, 0, authMgr)
+}
+
+func NewClientWithAuthAndConcurrency(cacheDir string, fetchTimeout, idleTimeout time.Duration, displayVerb bool, desiredConcurrency int, authMgr *auth.Manager) (*Client, error) {
+	return NewClientWithAuthAndConcurrencyConfig(cacheDir, fetchTimeout, idleTimeout, displayVerb, desiredConcurrency, 0, 0, authMgr)
+}
+
+func NewClientWithAuthAndConcurrencyConfig(cacheDir string, fetchTimeout, idleTimeout time.Duration, displayVerb bool, desiredConcurrency int, recoveryInterval, minRecoveryInterval time.Duration, authMgr *auth.Manager) (*Client, error) {
 	c, err := cache.NewCache(cacheDir)
 	if err != nil {
 		return nil, err
 	}
-	return NewClientWithTimeoutAndAuth(c, fetchTimeout, idleTimeout, displayVerb, authMgr), nil
+	return NewClientWithTimeoutAndAuthAndConcurrencyConfig(c, fetchTimeout, idleTimeout, displayVerb, desiredConcurrency, recoveryInterval, minRecoveryInterval, authMgr), nil
 }
 
 func NewClientWithTimeoutAndAuth(c *cache.Cache, timeout time.Duration, idleTimeout time.Duration, displayVerb bool, authMgr *auth.Manager) *Client {
-	acc := NewAdaptiveConcurrencyController(DefaultAdaptiveConcurrencyConfig())
+	return NewClientWithTimeoutAndAuthAndConcurrencyConfig(c, timeout, idleTimeout, displayVerb, 0, 0, 0, authMgr)
+}
+
+func NewClientWithTimeoutAndAuthAndConcurrency(c *cache.Cache, timeout time.Duration, idleTimeout time.Duration, displayVerb bool, desiredConcurrency int, authMgr *auth.Manager) *Client {
+	return NewClientWithTimeoutAndAuthAndConcurrencyConfig(c, timeout, idleTimeout, displayVerb, desiredConcurrency, 0, 0, authMgr)
+}
+
+func NewClientWithTimeoutAndAuthAndConcurrencyConfig(c *cache.Cache, timeout time.Duration, idleTimeout time.Duration, displayVerb bool, desiredConcurrency int, recoveryInterval, minRecoveryInterval time.Duration, authMgr *auth.Manager) *Client {
+	cfg := DefaultAdaptiveConcurrencyConfig()
+	if desiredConcurrency > 0 {
+		cfg.DesiredConcurrency = desiredConcurrency
+	}
+	if recoveryInterval > 0 {
+		cfg.RecoveryInterval = recoveryInterval
+	}
+	if minRecoveryInterval > 0 {
+		cfg.MinRecoveryInterval = minRecoveryInterval
+	}
+	acc := NewAdaptiveConcurrencyController(cfg)
 
 	rl := NewRateLimiter(RateLimiterConfig{
 		MaxRequestsPerSecond:     10,
