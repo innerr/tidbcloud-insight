@@ -458,6 +458,7 @@ func validateAndExplainAnomalies(
 		if !ev.keep {
 			continue
 		}
+		latHighCoverage := math.NaN()
 		// Long incidents are compared against the previous-day same window to
 		// suppress recurring diurnal patterns (business-hour ramps/plateaus).
 		// We only apply this to load-related labels to avoid hiding real
@@ -492,6 +493,7 @@ func validateAndExplainAnomalies(
 				endTS,
 				highThreshold,
 			)
+			latHighCoverage = coverage
 			if endTS-a.Timestamp+sampleIntervalSec >= 2*3600 && coverage < 0.42 {
 				continue
 			}
@@ -506,8 +508,8 @@ func validateAndExplainAnomalies(
 		applyReasonToAnomalyMeasurement(&a, ev)
 		applyReasonToAnomalyType(&a, ev.reason)
 		a.Detail = fmt.Sprintf(
-			"reason=%s qps_p95=%.3f base_qps_median=%.3f lat_p99=%.3fs base_lat_p99=%.3fs corr(stmt)=%.2f corr(tikv)=%.2f",
-			ev.reason, ev.qpsEventP95, ev.qpsBaseMed, ev.latEventP99, ev.latBaseP99, ev.stmtCorr, ev.tikvCorr)
+			"reason=%s qps_p95=%.3f base_qps_median=%.3f lat_p99=%.3fs base_lat_p99=%.3fs lat_high_coverage=%.2f corr(stmt)=%.2f corr(tikv)=%.2f",
+			ev.reason, ev.qpsEventP95, ev.qpsBaseMed, ev.latEventP99, ev.latBaseP99, latHighCoverage, ev.stmtCorr, ev.tikvCorr)
 		out = append(out, a)
 	}
 	return out
