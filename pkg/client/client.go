@@ -341,10 +341,6 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, bodyStr)
 	}
 
-	if c.displayVerb {
-		logger.Infof("%s -> HTTP %d", req.URL.Path, resp.StatusCode)
-	}
-
 	c.rateLimiter.RecordSuccess()
 	if c.concurrency != nil {
 		c.concurrency.OnSuccess()
@@ -522,7 +518,7 @@ func (c *Client) GetDsURL(ctx context.Context, clusterID, vendor, region, bizTyp
 	return dsURL, nil
 }
 
-func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, end, step int) (map[string]interface{}, error) {
+func (c *Client) QueryMetric(ctx context.Context, clusterID, dsURL, metric string, start, end, step int) (map[string]interface{}, error) {
 	var reqURL string
 	var params url.Values
 
@@ -555,9 +551,11 @@ func (c *Client) QueryMetric(ctx context.Context, dsURL, metric string, start, e
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	logAll := false
 	logger.SetConcurrencyProvider(c.concurrency)
-	logger.LogHTTP(metric, resp.StatusCode, logAll)
+
+	if resp.StatusCode != 200 {
+		logger.LogMetricsArrival(clusterID, metric, start, end, resp.StatusCode, 0, true)
+	}
 
 	data, err := c.readBodyWithIdleTimeout(ctx, resp.Body)
 	if err != nil {
@@ -649,11 +647,11 @@ type ChunkedMetricResult struct {
 	FailedSize     int
 }
 
-func (c *Client) QueryMetricChunked(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
-	return c.QueryMetricChunkedWithWriter(ctx, dsURL, metric, start, end, step, chunkSize, nil)
+func (c *Client) QueryMetricChunked(ctx context.Context, clusterID, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
+	return c.QueryMetricChunkedWithWriter(ctx, clusterID, dsURL, metric, start, end, step, chunkSize, nil)
 }
 
-func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, dsURL, metric string, start, end, step, chunkSize int, writer MetricWriter) (*ChunkedMetricResult, error) {
+func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, dsURL, metric string, start, end, step, chunkSize int, writer MetricWriter) (*ChunkedMetricResult, error) {
 	if chunkSize <= 0 {
 		chunkSize = 1800
 	}
@@ -663,7 +661,7 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, dsURL, metric
 		adjustedEnd = end
 	}
 
-	result, _, err := c.QueryMetricWithRetry(ctx, dsURL, metric, start, adjustedEnd, step)
+	result, _, err := c.QueryMetricWithRetry(ctx, clusterID, dsURL, metric, start, adjustedEnd, step)
 	if err != nil {
 		if isTooManySamplesError(err) {
 			return &ChunkedMetricResult{
@@ -686,7 +684,7 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, dsURL, metric
 	}
 
 	if adjustedEnd < end {
-		remaining, _ := c.QueryMetricChunkedWithWriter(ctx, dsURL, metric, adjustedEnd, end, step, chunkSize, writer)
+		remaining, _ := c.QueryMetricChunkedWithWriter(ctx, clusterID, dsURL, metric, adjustedEnd, end, step, chunkSize, writer)
 		if remaining != nil {
 			totalDataSize += remaining.DataSize
 			totalByteSize += remaining.ByteSize
@@ -788,11 +786,11 @@ func estimateByteSize(result map[string]interface{}) int64 {
 	return int64(len(data))
 }
 
-func (c *Client) QueryMetricWithRetry(ctx context.Context, dsURL, metric string, start, end, initialStep int) (map[string]interface{}, int, error) {
+func (c *Client) QueryMetricWithRetry(ctx context.Context, clusterID, dsURL, metric string, start, end, initialStep int) (map[string]interface{}, int, error) {
 	stepsToTry := []int{initialStep, 120, 300, 600}
 
 	for _, step := range stepsToTry {
-		result, err := c.QueryMetric(ctx, dsURL, metric, start, end, step)
+		result, err := c.QueryMetric(ctx, clusterID, dsURL, metric, start, end, step)
 		if err != nil {
 			continue
 		}
@@ -827,7 +825,7 @@ func (c *Client) QueryMetricWithRetry(ctx context.Context, dsURL, metric string,
 	return nil, 0, fmt.Errorf("no data found")
 }
 
-func (c *Client) FetchMetricsConcurrent(ctx context.Context, metrics []string, start, end, step int, dsURL string, onProgress func(metric string, err error)) map[string]map[string]interface{} {
+func (c *Client) FetchMetricsConcurrent(ctx context.Context, clusterID string, metrics []string, start, end, step int, dsURL string, onProgress func(metric string, err error)) map[string]map[string]interface{} {
 	var mu sync.Mutex
 	allData := make(map[string]map[string]interface{})
 	var wg sync.WaitGroup
@@ -847,7 +845,7 @@ func (c *Client) FetchMetricsConcurrent(ctx context.Context, metrics []string, s
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			result, err := c.QueryMetric(ctx, dsURL, m, start, end, step)
+			result, err := c.QueryMetric(ctx, clusterID, dsURL, m, start, end, step)
 
 			mu.Lock()
 			if err != nil {
@@ -889,7 +887,7 @@ func (c *Client) FetchMetricsChunked(ctx context.Context, metrics []string, star
 	}
 
 	fmt.Printf("Fetching %d simple metrics...\n", len(simpleMetrics))
-	simpleResults := c.FetchMetricsConcurrent(ctx, simpleMetrics, start, end, step, dsURL, func(metric string, err error) {
+	simpleResults := c.FetchMetricsConcurrent(ctx, clusterID, simpleMetrics, start, end, step, dsURL, func(metric string, err error) {
 		if err != nil {
 			fmt.Printf("  %s: FAILED (%v)\n", metric, err)
 		} else {
@@ -919,7 +917,7 @@ func (c *Client) FetchMetricsChunked(ctx context.Context, metrics []string, star
 			var chunkedResults []map[string]interface{}
 
 			for i, chunk := range chunks {
-				result, err := c.QueryMetric(ctx, dsURL, metric, chunk[0], chunk[1], step)
+				result, err := c.QueryMetric(ctx, clusterID, dsURL, metric, chunk[0], chunk[1], step)
 				if err != nil {
 					fmt.Printf("    chunk %d/%d: FAILED\n", i+1, len(chunks))
 					continue
