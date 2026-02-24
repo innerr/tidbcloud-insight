@@ -12,6 +12,7 @@ import (
 
 const minChunkSize = 300        // 5 minutes
 const maxMergeChunkSize = 86400 // 1 day
+const maxMergeMultiplier = 8    // max 8x growth per merge
 
 type SplitRecord struct {
 	ClusterID  string
@@ -267,21 +268,26 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 	}
 
 	targetHalf := result.TargetBytes / 2
-	newChunkSize := int(float64(result.ChunkSize) * float64(targetHalf) / float64(result.ActualBytes))
+	estimatedChunkSize := int(float64(result.ChunkSize) * float64(targetHalf) / float64(result.ActualBytes))
 
-	if newChunkSize <= result.ChunkSize {
+	maxGrowth := result.ChunkSize * maxMergeMultiplier
+	if estimatedChunkSize > maxGrowth {
+		estimatedChunkSize = maxGrowth
+	}
+
+	if estimatedChunkSize > maxMergeChunkSize {
+		estimatedChunkSize = maxMergeChunkSize
+	}
+
+	if estimatedChunkSize <= result.ChunkSize {
 		return
 	}
 
-	if newChunkSize > maxMergeChunkSize {
-		newChunkSize = maxMergeChunkSize
-	}
+	logger.Warnf("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target half %d bytes)",
+		key, result.ChunkSize, estimatedChunkSize, result.ActualBytes, targetHalf)
 
-	logger.Infof("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target half %d bytes)",
-		key, result.ChunkSize, newChunkSize, result.ActualBytes, targetHalf)
-
-	q.currentChunkSize[key] = newChunkSize
-	q.mergePendingTasksLocked(key, newChunkSize)
+	q.currentChunkSize[key] = estimatedChunkSize
+	q.mergePendingTasksLocked(key, estimatedChunkSize)
 }
 
 func (q *FetchQueue) mergePendingTasksLocked(key string, newChunkSize int) {

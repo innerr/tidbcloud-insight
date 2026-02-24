@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"tidbcloud-insight/pkg/client"
+	"tidbcloud-insight/pkg/logger"
 	"tidbcloud-insight/pkg/prometheus_storage"
 
 	"github.com/innerr/ticat/pkg/core/model"
@@ -224,6 +225,7 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 
 	res, err := f.client.QueryMetricChunkedWithWriter(
 		ctx,
+		task.ClusterID,
 		task.DSURL,
 		task.Metric,
 		int(task.GapStart),
@@ -272,6 +274,8 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 
 	actualBytes := writer.BytesWritten()
 	targetBytes := f.chunkSizer.TargetBytesPerChunk()
+
+	logger.LogMetricsArrival(task.ClusterID, task.Metric, int(task.GapStart), int(task.GapEnd), 200, actualBytes, true)
 
 	if actualBytes > 0 && actualBytes < targetBytes/2 {
 		return &TaskResult{

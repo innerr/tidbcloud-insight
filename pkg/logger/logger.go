@@ -198,6 +198,87 @@ func LogHTTP(metric string, statusCode int, logAll bool) {
 	if !logAll && statusCode == 200 {
 		return
 	}
-	msg := metric + " -> " + strconv.Itoa(statusCode)
+	msg := metric + " -> HTTP " + strconv.Itoa(statusCode)
 	defaultLogger.log("INFO", INFO, msg)
+}
+
+func LogMetricsArrival(clusterID, metric string, start, end, statusCode int, bytesWritten int64, logAll bool) {
+	if !logAll && statusCode == 200 {
+		return
+	}
+	durationStr := ""
+	if start > 0 && end > 0 && end > start {
+		durationStr = formatDurationShort(end - start)
+	}
+
+	bytesStr := formatBytes(bytesWritten)
+
+	var msg string
+	if clusterID != "" && durationStr != "" {
+		msg = fmt.Sprintf("%s %s [%s] %s -> HTTP %d", clusterID, metric, durationStr, bytesStr, statusCode)
+	} else if clusterID != "" {
+		msg = fmt.Sprintf("%s %s %s -> HTTP %d", clusterID, metric, bytesStr, statusCode)
+	} else if durationStr != "" {
+		msg = fmt.Sprintf("%s [%s] %s -> HTTP %d", metric, durationStr, bytesStr, statusCode)
+	} else {
+		msg = fmt.Sprintf("%s %s -> HTTP %d", metric, bytesStr, statusCode)
+	}
+	defaultLogger.logForce("INFO", INFO, msg)
+}
+
+func (l *Logger) logForce(level string, levelVal LogLevel, msg string) {
+	ts := formatTimestamp()
+	if l.useColor() {
+		const darkGray = "\x1b[90m"
+		const reset = "\x1b[0m"
+		if l.hasConcurrencyProvider() {
+			current, desired := l.getConcurrency()
+			gid := getGoroutineID()
+			log.Printf("%s[%s] %s conc: %d/%d grid: #%d %s%s", darkGray, level, ts, current, desired, gid, msg, reset)
+		} else {
+			log.Printf("%s[%s] %s %s%s", darkGray, level, ts, msg, reset)
+		}
+	} else {
+		if l.hasConcurrencyProvider() {
+			current, desired := l.getConcurrency()
+			gid := getGoroutineID()
+			log.Printf("[%s] %s conc: %d/%d grid: #%d %s", level, ts, current, desired, gid, msg)
+		} else {
+			log.Printf("[%s] %s %s", level, ts, msg)
+		}
+	}
+}
+
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%dB", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
+	} else {
+		return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
+	}
+}
+
+func formatDurationShort(seconds int) string {
+	if seconds < 60 {
+		return "<1m"
+	}
+	minutes := seconds / 60
+	if minutes < 60 {
+		return strconv.Itoa(minutes) + "m"
+	}
+	hours := minutes / 60
+	if hours < 24 {
+		remainingMinutes := minutes % 60
+		if remainingMinutes == 0 {
+			return strconv.Itoa(hours) + "h"
+		}
+		return strconv.Itoa(hours) + "h" + strconv.Itoa(remainingMinutes) + "m"
+	}
+	days := hours / 24
+	remainingHours := hours % 24
+	if remainingHours == 0 {
+		return strconv.Itoa(days) + "d"
+	}
+	return strconv.Itoa(days) + "d" + strconv.Itoa(remainingHours) + "h"
 }
