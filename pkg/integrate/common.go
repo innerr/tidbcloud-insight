@@ -1,6 +1,7 @@
 package integrate
 
 import (
+	"fmt"
 	"time"
 
 	"tidbcloud-insight/pkg/auth"
@@ -58,14 +59,22 @@ func getMetaDir(env *model.Env) string {
 	return getEnvString(env, EnvKeyMetaDir, "./meta")
 }
 
-func getAuthParams(env *model.Env, cacheDir string) AuthParams {
+func getAuthParams(env *model.Env, cacheDir string) (AuthParams, error) {
+	tokenURL := env.GetRaw(EnvKeyAuthTokenURL)
+	if tokenURL == "" {
+		return AuthParams{}, fmt.Errorf(EnvKeyAuthTokenURL + " is not set")
+	}
+	audience := env.GetRaw(EnvKeyAuthAudience)
+	if audience == "" {
+		return AuthParams{}, fmt.Errorf(EnvKeyAuthAudience + " is not set")
+	}
 	return AuthParams{
 		ClientID:     env.GetRaw(EnvKeyAuthClientID),
 		ClientSecret: env.GetRaw(EnvKeyAuthClientSecret),
-		TokenURL:     getEnvString(env, EnvKeyAuthTokenURL, "https://tidb-soc2.us.auth0.com/oauth/token"),
-		Audience:     getEnvString(env, EnvKeyAuthAudience, "https://tidb-soc2.us.auth0.com/api/v2/"),
+		TokenURL:     tokenURL,
+		Audience:     audience,
 		CachePath:    cacheDir + "/auth.json",
-	}
+	}, nil
 }
 
 func getClientParams(env *model.Env) ClientParams {

@@ -25,7 +25,7 @@ func Integrate(tc *ticat.TiCat) error {
 
 	tc.AddIntegratedModVersion("tidbcloud-insight 1.0")
 
-	defEnv := tc.Env.GetLayer(model.EnvLayerDefault)
+	defEnv := tc.Env.GetLayer(model.EnvLayer3RdDefault)
 
 	defEnv.Set("sys.hub.init-repo", "")
 	defEnv.SetBool("display.utf8", false)
@@ -42,6 +42,9 @@ func Integrate(tc *ticat.TiCat) error {
 	defEnv.SetInt(impl.EnvKeyRateLimitDesiredConcurrency, 5)
 	defEnv.Set(EnvKeyRateLimitRecoveryInterval, "30s")
 	defEnv.Set(EnvKeyRateLimitMinRecovery, "10s")
+
+	defEnv.Set(EnvKeyAuthTokenURL, "https://tidb-soc2.us.auth0.com/oauth/token")
+	defEnv.Set(EnvKeyAuthAudience, "https://tidb-soc2.us.auth0.com/api/v2/")
 
 	RegisterCmds(tc.Cmds)
 	RegisterHelp(tc)

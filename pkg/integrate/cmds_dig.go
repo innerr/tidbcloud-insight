@@ -31,7 +31,11 @@ func DigProfileCmd(
 		return currCmdIdx, fmt.Errorf("cluster-id is required")
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -63,7 +67,11 @@ func DigAbnormalCmd(
 		return currCmdIdx, fmt.Errorf("cluster-id is required")
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -90,7 +98,11 @@ func DigRandomProfileCmd(
 		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -117,7 +129,11 @@ func DigRandomAbnormalCmd(
 		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -144,7 +160,11 @@ func DigWalkProfileCmd(
 		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -171,7 +191,11 @@ func DigWalkAbnormalCmd(
 		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 

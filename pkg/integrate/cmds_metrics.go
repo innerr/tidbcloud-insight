@@ -29,7 +29,11 @@ func MetricsFetchCmd(
 	clusterID := env.GetRaw(EnvKeyClusterID)
 	metricFilter := env.GetRaw(EnvKeyMetrics)
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -62,7 +66,11 @@ func MetricsFetchRandom(
 
 	metricFilter := env.GetRaw(EnvKeyMetrics)
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -93,7 +101,11 @@ func MetricsFetchAll(
 		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
