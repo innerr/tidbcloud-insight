@@ -91,6 +91,25 @@ func loadMetricsData(cacheDir, clusterID string, startTS, endTS int64) (*metrics
 	}, nil
 }
 
+func loadMetricsDataWithFallback(cacheDir, clusterID string, startTS, endTS int64) (*metricsData, int64, int64, error) {
+	data, err := loadMetricsData(cacheDir, clusterID, startTS, endTS)
+	if err != nil {
+		return nil, startTS, endTS, err
+	}
+	if len(data.qpsData) > 0 {
+		return data, startTS, endTS, nil
+	}
+	fallbackStart, fallbackEnd, ok := inferLatestCachedMetricRange(cacheDir, clusterID, "tidb_server_query_total")
+	if !ok || (fallbackStart == startTS && fallbackEnd == endTS) {
+		return data, startTS, endTS, nil
+	}
+	fallbackData, err := loadMetricsData(cacheDir, clusterID, fallbackStart, fallbackEnd)
+	if err != nil {
+		return nil, startTS, endTS, err
+	}
+	return fallbackData, fallbackStart, fallbackEnd, nil
+}
+
 func DigProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Duration,
 	authMgr *AuthManager, config MetricsFetcherConfig,
 	clusterID string, startTS, endTS int64, jsonOutput bool) error {
@@ -101,22 +120,14 @@ func DigProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Durat
 		time.Unix(endTS, 0).Format("2006-01-02 15:04:05"))
 
 	fmt.Println("\nLoading metrics data...")
-	data, err := loadMetricsData(cacheDir, clusterID, startTS, endTS)
+	data, usedStartTS, usedEndTS, err := loadMetricsDataWithFallback(cacheDir, clusterID, startTS, endTS)
 	if err != nil {
 		return err
 	}
-	if len(data.qpsData) == 0 {
-		if fallbackStart, fallbackEnd, ok := inferLatestCachedMetricRange(cacheDir, clusterID, "tidb_server_query_total"); ok {
-			if fallbackStart != startTS || fallbackEnd != endTS {
-				fmt.Printf("No QPS in requested range, fallback to cached range: %s ~ %s\n",
-					time.Unix(fallbackStart, 0).Format("2006-01-02 15:04:05"),
-					time.Unix(fallbackEnd, 0).Format("2006-01-02 15:04:05"))
-				data, err = loadMetricsData(cacheDir, clusterID, fallbackStart, fallbackEnd)
-				if err != nil {
-					return err
-				}
-			}
-		}
+	if usedStartTS != startTS || usedEndTS != endTS {
+		fmt.Printf("No QPS in requested range, fallback to cached range: %s ~ %s\n",
+			time.Unix(usedStartTS, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(usedEndTS, 0).Format("2006-01-02 15:04:05"))
 	}
 
 	fmt.Printf("Loaded %d QPS data points\n", len(data.qpsData))
@@ -164,24 +175,14 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 		time.Unix(endTS, 0).Format("2006-01-02 15:04:05"))
 
 	fmt.Println("\nLoading metrics data...")
-	data, err := loadMetricsData(cacheDir, clusterID, startTS, endTS)
+	data, usedStartTS, usedEndTS, err := loadMetricsDataWithFallback(cacheDir, clusterID, startTS, endTS)
 	if err != nil {
 		return err
 	}
-	if len(data.qpsData) == 0 {
-		// Fallback to the latest cached window so dig.a can still analyze cached
-		// history when current default time range has no overlap.
-		if fallbackStart, fallbackEnd, ok := inferLatestCachedMetricRange(cacheDir, clusterID, "tidb_server_query_total"); ok {
-			if fallbackStart != startTS || fallbackEnd != endTS {
-				fmt.Printf("No QPS in requested range, fallback to cached range: %s ~ %s\n",
-					time.Unix(fallbackStart, 0).Format("2006-01-02 15:04:05"),
-					time.Unix(fallbackEnd, 0).Format("2006-01-02 15:04:05"))
-				data, err = loadMetricsData(cacheDir, clusterID, fallbackStart, fallbackEnd)
-				if err != nil {
-					return err
-				}
-			}
-		}
+	if usedStartTS != startTS || usedEndTS != endTS {
+		fmt.Printf("No QPS in requested range, fallback to cached range: %s ~ %s\n",
+			time.Unix(usedStartTS, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(usedEndTS, 0).Format("2006-01-02 15:04:05"))
 	}
 
 	fmt.Printf("Loaded %d QPS data points\n", len(data.qpsData))
