@@ -596,3 +596,15 @@ func TestCalculateHighValueCoverage(t *testing.T) {
 		t.Fatalf("unexpected first/last high timestamp: %d %d", firstTS, lastTS)
 	}
 }
+
+func TestShouldSkipMetricLine(t *testing.T) {
+	if !shouldSkipMetricLine("tidb_server_query_total", `tidb_server_query_total{result="Error"} 1 1`) {
+		t.Fatalf("expected non-OK query_total line to be skipped")
+	}
+	if shouldSkipMetricLine("tidb_server_query_total", `tidb_server_query_total{result="OK"} 1 1`) {
+		t.Fatalf("expected OK query_total line to be kept")
+	}
+	if shouldSkipMetricLine("tidb_executor_statement_total", `tidb_executor_statement_total{sql_type="Select"} 1 1`) {
+		t.Fatalf("expected non-query metric line to be kept")
+	}
+}
