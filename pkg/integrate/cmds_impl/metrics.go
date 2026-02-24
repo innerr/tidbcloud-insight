@@ -214,7 +214,21 @@ func MetricsFetchWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *
 
 	result, err := fetcher.Fetch(ctx, clusterID, dsURL, metricsToFetch, startTS, endTS, step)
 	if err != nil {
-		return 0, err
+		if result != nil && len(result.Errors) > 0 {
+			printed := 0
+			for _, e := range result.Errors {
+				fmt.Printf("  fetch error: %v\n", e)
+				printed++
+				if printed >= 5 {
+					if len(result.Errors) > printed {
+						fmt.Printf("  ... and %d more errors\n", len(result.Errors)-printed)
+					}
+					break
+				}
+			}
+			return 0, fmt.Errorf("failed to fetch metrics for cluster %s: %w", clusterID, err)
+		}
+		return 0, fmt.Errorf("failed to fetch metrics for cluster %s: %w", clusterID, err)
 	}
 
 	for _, m := range metricsToFetch {

@@ -257,6 +257,26 @@ func (w *PrometheusMetricWriter) Close() error {
 	return nil
 }
 
+func (w *PrometheusMetricWriter) Abort() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return
+	}
+	w.closed = true
+
+	if w.bufWriter != nil {
+		_ = w.bufWriter.Flush()
+	}
+	if w.tmpFile != nil {
+		_ = w.tmpFile.Close()
+	}
+	if w.tmpFilePath != "" {
+		_ = os.Remove(w.tmpFilePath)
+	}
+}
+
 func (w *PrometheusMetricWriter) BytesWritten() int64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()

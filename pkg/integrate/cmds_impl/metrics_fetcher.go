@@ -228,7 +228,7 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 	)
 
 	if err != nil {
-		writer.Close()
+		writer.Abort()
 
 		if res != nil && res.TooManySamples {
 			return &TaskResult{
