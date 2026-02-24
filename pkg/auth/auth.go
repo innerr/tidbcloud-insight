@@ -107,7 +107,7 @@ func (m *Manager) saveToCache() error {
 
 func (m *Manager) fetchNewToken() error {
 	if m.clientID == "" {
-		return fmt.Errorf("auth config not loaded")
+		return fmt.Errorf("auth info is missing in env: tidbcloud-insight.auth.client-id, tidbcloud-insight.auth.client-secret")
 	}
 
 	data := url.Values{}
