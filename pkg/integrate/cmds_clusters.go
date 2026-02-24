@@ -32,7 +32,11 @@ func ClustersDedicatedFetch(
 		pageSize = 500
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
@@ -67,7 +71,11 @@ func ClustersPremiumFetch(
 		pageSize = 500
 	}
 
-	authMgr := getAuthParams(env, cacheDir).NewManager()
+	authParams, err := getAuthParams(env, cacheDir)
+	if err != nil {
+		return currCmdIdx, err
+	}
+	authMgr := authParams.NewManager()
 	authMgr.StartBackgroundRefresh()
 	defer authMgr.Stop()
 
