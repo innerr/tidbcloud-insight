@@ -2,6 +2,8 @@ package impl
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"tidbcloud-insight/pkg/analysis"
@@ -606,5 +608,40 @@ func TestShouldSkipMetricLine(t *testing.T) {
 	}
 	if shouldSkipMetricLine("tidb_executor_statement_total", `tidb_executor_statement_total{sql_type="Select"} 1 1`) {
 		t.Fatalf("expected non-query metric line to be kept")
+	}
+}
+
+func TestParsePromRangeFromFilename(t *testing.T) {
+	start, end, ok := parsePromRangeFromFilename("2026-02-20_12-15-00_2026-02-22_12-15-00.prom")
+	if !ok {
+		t.Fatalf("expected filename parsing success")
+	}
+	if end <= start {
+		t.Fatalf("expected end > start, got %d <= %d", end, start)
+	}
+}
+
+func TestInferLatestCachedMetricRange(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "metrics", "c1", "tidb_server_query_total")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	files := []string{
+		"2026-02-20_12-15-00_2026-02-22_12-15-00.prom",
+		"2026-02-21_12-15-00_2026-02-23_12-15-00.prom",
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("# mock\n"), 0o644); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+	}
+	start, end, ok := inferLatestCachedMetricRange(tmp, "c1", "tidb_server_query_total")
+	if !ok {
+		t.Fatalf("expected infer latest range success")
+	}
+	expStart, expEnd, _ := parsePromRangeFromFilename(files[1])
+	if start != expStart || end != expEnd {
+		t.Fatalf("unexpected inferred range: got [%d,%d], want [%d,%d]", start, end, expStart, expEnd)
 	}
 }

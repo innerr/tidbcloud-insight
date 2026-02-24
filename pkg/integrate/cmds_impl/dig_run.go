@@ -155,6 +155,21 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	if err != nil {
 		return err
 	}
+	if len(data.qpsData) == 0 {
+		// Fallback to the latest cached window so dig.a can still analyze cached
+		// history when current default time range has no overlap.
+		if fallbackStart, fallbackEnd, ok := inferLatestCachedMetricRange(cacheDir, clusterID, "tidb_server_query_total"); ok {
+			if fallbackStart != startTS || fallbackEnd != endTS {
+				fmt.Printf("No QPS in requested range, fallback to cached range: %s ~ %s\n",
+					time.Unix(fallbackStart, 0).Format("2006-01-02 15:04:05"),
+					time.Unix(fallbackEnd, 0).Format("2006-01-02 15:04:05"))
+				data, err = loadMetricsData(cacheDir, clusterID, fallbackStart, fallbackEnd)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
 
 	fmt.Printf("Loaded %d QPS data points\n", len(data.qpsData))
 	if len(data.latencyData) > 0 {
@@ -304,6 +319,47 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	}
 
 	return nil
+}
+
+func inferLatestCachedMetricRange(cacheDir, clusterID, metricName string) (int64, int64, bool) {
+	metricDir := filepath.Join(cacheDir, "metrics", clusterID, metricName)
+	entries, err := os.ReadDir(metricDir)
+	if err != nil {
+		return 0, 0, false
+	}
+	var bestStart, bestEnd int64
+	found := false
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".prom") {
+			continue
+		}
+		start, end, ok := parsePromRangeFromFilename(e.Name())
+		if !ok {
+			continue
+		}
+		if !found || end > bestEnd || (end == bestEnd && start < bestStart) {
+			bestStart = start
+			bestEnd = end
+			found = true
+		}
+	}
+	return bestStart, bestEnd, found
+}
+
+func parsePromRangeFromFilename(name string) (int64, int64, bool) {
+	trimmed := strings.TrimSuffix(name, ".prom")
+	parts := strings.Split(trimmed, "_")
+	if len(parts) < 4 {
+		return 0, 0, false
+	}
+	startStr := parts[0] + "_" + parts[1]
+	endStr := parts[2] + "_" + parts[3]
+	start, err1 := time.Parse("2006-01-02_15-04-05", startStr)
+	end, err2 := time.Parse("2006-01-02_15-04-05", endStr)
+	if err1 != nil || err2 != nil || end.Before(start) {
+		return 0, 0, false
+	}
+	return start.Unix(), end.Unix(), true
 }
 
 func loadMetricTimeSeries(storage *prometheus_storage.PrometheusStorage, clusterID, metricName string, startTS, endTS int64) ([]analysis.TimeSeriesPoint, error) {
