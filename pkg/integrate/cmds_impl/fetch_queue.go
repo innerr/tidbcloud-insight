@@ -20,6 +20,12 @@ type SplitRecord struct {
 	BeforeSize int
 }
 
+type MergeRecord struct {
+	ClusterID string
+	Metric    string
+	AfterSize int
+}
+
 type TaskResult struct {
 	Task         *FetchTask
 	Success      bool
@@ -48,6 +54,7 @@ type FetchQueue struct {
 	results []*TaskResult
 
 	splitHistory     []SplitRecord
+	mergeHistory     []MergeRecord
 	currentChunkSize map[string]int
 	abortedClusters  map[string]bool
 
@@ -67,6 +74,7 @@ func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler) 
 		cancel:           cancel,
 		pending:          make(map[string][]*FetchTask),
 		splitHistory:     make([]SplitRecord, 0),
+		mergeHistory:     make([]MergeRecord, 0),
 		currentChunkSize: make(map[string]int),
 		abortedClusters:  make(map[string]bool),
 		workers:          workers,
@@ -191,6 +199,9 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 
 	task := result.Task
 
+	key := q.taskKey(task)
+	q.removeTaskFromPendingLocked(key, task)
+
 	if q.abortedClusters[task.ClusterID] {
 		q.cond.Broadcast()
 		return
@@ -222,6 +233,20 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 
 	q.results = append(q.results, result)
 	q.cond.Broadcast()
+}
+
+func (q *FetchQueue) removeTaskFromPendingLocked(key string, task *FetchTask) {
+	tasks, exists := q.pending[key]
+	if !exists {
+		return
+	}
+	var newTasks []*FetchTask
+	for _, t := range tasks {
+		if t.GapStart != task.GapStart || t.GapEnd != task.GapEnd {
+			newTasks = append(newTasks, t)
+		}
+	}
+	q.pending[key] = newTasks
 }
 
 func (q *FetchQueue) handleSplitLocked(result *TaskResult) {
@@ -263,6 +288,12 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 	task := result.Task
 	key := q.taskKey(task)
 
+	for _, r := range q.mergeHistory {
+		if r.ClusterID == task.ClusterID && r.Metric == task.Metric {
+			return
+		}
+	}
+
 	if result.ActualBytes <= 0 || result.ChunkSize <= 0 {
 		return
 	}
@@ -286,6 +317,11 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 	logger.Warnf("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target half %d bytes)",
 		key, result.ChunkSize, estimatedChunkSize, result.ActualBytes, targetHalf)
 
+	q.mergeHistory = append(q.mergeHistory, MergeRecord{
+		ClusterID: task.ClusterID,
+		Metric:    task.Metric,
+		AfterSize: estimatedChunkSize,
+	})
 	q.currentChunkSize[key] = estimatedChunkSize
 	q.mergePendingTasksLocked(key, estimatedChunkSize)
 }
