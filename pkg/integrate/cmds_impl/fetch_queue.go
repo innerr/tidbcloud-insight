@@ -3,13 +3,15 @@ package impl
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
 	"tidbcloud-insight/pkg/logger"
 )
 
-const minChunkSize = 300 // 5 minutes
+const minChunkSize = 300        // 5 minutes
+const maxMergeChunkSize = 86400 // 1 day
 
 type SplitRecord struct {
 	ClusterID  string
@@ -24,6 +26,10 @@ type TaskResult struct {
 	NeedSplit    bool
 	FailedSize   int
 	AbortCluster bool
+	NeedMerge    bool
+	ActualBytes  int64
+	TargetBytes  int64
+	ChunkSize    int
 }
 
 type TaskHandler func(ctx context.Context, task *FetchTask) *TaskResult
@@ -203,6 +209,10 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 		return
 	}
 
+	if result.NeedMerge {
+		q.handleMergeLocked(result)
+	}
+
 	if !result.Success {
 		q.requeueTaskLocked(task)
 		q.cond.Broadcast()
@@ -246,6 +256,81 @@ func (q *FetchQueue) handleSplitLocked(result *TaskResult) {
 	q.splitPendingTasksLocked(key, newChunkSize)
 
 	q.requeueTaskLocked(task)
+}
+
+func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
+	task := result.Task
+	key := q.taskKey(task)
+
+	if result.ActualBytes <= 0 || result.ChunkSize <= 0 {
+		return
+	}
+
+	targetHalf := result.TargetBytes / 2
+	newChunkSize := int(float64(result.ChunkSize) * float64(targetHalf) / float64(result.ActualBytes))
+
+	if newChunkSize <= result.ChunkSize {
+		return
+	}
+
+	if newChunkSize > maxMergeChunkSize {
+		newChunkSize = maxMergeChunkSize
+	}
+
+	logger.Infof("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target half %d bytes)",
+		key, result.ChunkSize, newChunkSize, result.ActualBytes, targetHalf)
+
+	q.currentChunkSize[key] = newChunkSize
+	q.mergePendingTasksLocked(key, newChunkSize)
+}
+
+func (q *FetchQueue) mergePendingTasksLocked(key string, newChunkSize int) {
+	tasks, exists := q.pending[key]
+	if !exists || len(tasks) == 0 {
+		return
+	}
+
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].GapStart < tasks[j].GapStart
+	})
+
+	var mergedTasks []*FetchTask
+	for _, task := range tasks {
+		if len(mergedTasks) == 0 {
+			mergedTasks = append(mergedTasks, &FetchTask{
+				ID:        task.ID,
+				ClusterID: task.ClusterID,
+				Metric:    task.Metric,
+				GapStart:  task.GapStart,
+				GapEnd:    task.GapEnd,
+				DSURL:     task.DSURL,
+				Step:      task.Step,
+				ChunkSize: newChunkSize,
+			})
+			continue
+		}
+
+		last := mergedTasks[len(mergedTasks)-1]
+		mergedDuration := task.GapEnd - last.GapStart
+
+		if mergedDuration <= int64(newChunkSize) {
+			last.GapEnd = task.GapEnd
+		} else {
+			mergedTasks = append(mergedTasks, &FetchTask{
+				ID:        task.ID,
+				ClusterID: task.ClusterID,
+				Metric:    task.Metric,
+				GapStart:  task.GapStart,
+				GapEnd:    task.GapEnd,
+				DSURL:     task.DSURL,
+				Step:      task.Step,
+				ChunkSize: newChunkSize,
+			})
+		}
+	}
+
+	q.pending[key] = mergedTasks
+	q.rebuildAllPendingLocked()
 }
 
 func (q *FetchQueue) splitPendingTasksLocked(key string, newChunkSize int) {

@@ -86,6 +86,12 @@ func (s *AdaptiveChunkSizer) GetSamplesPerSecond() float64 {
 	return s.samplesPerSecond
 }
 
+func (s *AdaptiveChunkSizer) TargetBytesPerChunk() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.targetBytesPerChunk
+}
+
 type MetricsFetcher struct {
 	client     *client.Client
 	storage    *prometheus_storage.PrometheusStorage
@@ -261,6 +267,20 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 			Task:    task,
 			Success: false,
 			Error:   fmt.Errorf("failed to close writer: %w", closeErr),
+		}
+	}
+
+	actualBytes := writer.BytesWritten()
+	targetBytes := f.chunkSizer.TargetBytesPerChunk()
+
+	if actualBytes > 0 && actualBytes < targetBytes/2 {
+		return &TaskResult{
+			Task:        task,
+			Success:     true,
+			NeedMerge:   true,
+			ActualBytes: actualBytes,
+			TargetBytes: targetBytes,
+			ChunkSize:   task.ChunkSize,
 		}
 	}
 
