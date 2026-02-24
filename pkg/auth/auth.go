@@ -78,6 +78,7 @@ func (m *Manager) loadFromCache() {
 		m.expiry = cache.Expiry
 		m.lastTokenSource = "cache"
 		m.mu.Unlock()
+		logger.Infof("[Auth] token loaded from cache, expires in %v", time.Until(cache.Expiry).Round(time.Second))
 	}
 }
 
@@ -102,7 +103,11 @@ func (m *Manager) saveToCache() error {
 		return err
 	}
 
-	return os.WriteFile(m.cachePath, data, 0600)
+	if err := os.WriteFile(m.cachePath, data, 0600); err != nil {
+		return err
+	}
+	logger.Infof("[Auth] token saved to cache file: %s", m.cachePath)
+	return nil
 }
 
 func (m *Manager) fetchNewToken() error {
@@ -123,12 +128,14 @@ func (m *Manager) fetchNewToken() error {
 
 	resp, err := http.PostForm(tokenURL, data)
 	if err != nil {
+		logger.Errorf("[Auth] failed to request token from remote: %v", err)
 		return fmt.Errorf("failed to get OAuth token: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		logger.Errorf("[Auth] token request failed with status %d: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("OAuth request failed with status %d: %s (client_id=%s, audience=%s)", resp.StatusCode, string(body), m.clientID, m.audience)
 	}
 
@@ -147,6 +154,8 @@ func (m *Manager) fetchNewToken() error {
 	m.refreshing = false
 	m.lastTokenSource = "remote"
 	m.mu.Unlock()
+
+	logger.Infof("[Auth] token acquired from remote, expires in %v", time.Duration(result.ExpiresIn-60)*time.Second)
 
 	_ = m.saveToCache()
 
