@@ -82,6 +82,11 @@ func getClientParams(env *model.Env) ClientParams {
 		FetchTimeout: getEnvDuration(env, EnvKeyFetchTimeout, 5*time.Minute),
 		IdleTimeout:  getEnvDuration(env, EnvKeyIdleTimeout, 3*time.Minute),
 		DisplayVerb:  getEnvBool(env, EnvKeyVerbose, true),
+		Concurrency: impl.ConcurrencyConfig{
+			DesiredConcurrency:  env.GetInt(impl.EnvKeyRateLimitDesiredConcurrency),
+			RecoveryInterval:    getEnvDuration(env, EnvKeyRateLimitRecoveryInterval, 30*time.Second),
+			MinRecoveryInterval: getEnvDuration(env, EnvKeyRateLimitMinRecovery, 10*time.Second),
+		},
 	}
 }
 
