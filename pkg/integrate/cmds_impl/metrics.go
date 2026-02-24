@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -406,12 +407,29 @@ func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMg
 		return fmt.Errorf("no active clusters found")
 	}
 
+	promStorage := prometheus_storage.NewPrometheusStorage(filepath.Join(cacheDir, "metrics"))
+	hasCache := make(map[string]bool)
+	for _, c := range allClusters {
+		metrics, _ := promStorage.ListMetrics(c.clusterID)
+		hasCache[c.clusterID] = len(metrics) > 0
+	}
+
 	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(allClusters), func(i, j int) {
 		allClusters[i], allClusters[j] = allClusters[j], allClusters[i]
 	})
 
-	fmt.Printf("Fetching metrics for %d clusters\n\n", len(allClusters))
+	sort.SliceStable(allClusters, func(i, j int) bool {
+		return !hasCache[allClusters[i].clusterID] && hasCache[allClusters[j].clusterID]
+	})
+
+	cachedCount := 0
+	for _, has := range hasCache {
+		if has {
+			cachedCount++
+		}
+	}
+	fmt.Printf("Fetching metrics for %d clusters (%d cached, %d new)\n\n", len(allClusters), cachedCount, len(allClusters)-cachedCount)
 
 	successCount := 0
 	failCount := 0
