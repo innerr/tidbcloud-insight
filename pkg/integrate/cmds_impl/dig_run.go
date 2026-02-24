@@ -322,7 +322,7 @@ func loadMetricTimeSeries(storage *prometheus_storage.PrometheusStorage, cluster
 
 	dataByTs := make(map[int64]float64)
 	for _, file := range files {
-		err := parsePromFileForTimeSeries(file, startTS, endTS, dataByTs)
+		err := parsePromFileForTimeSeries(file, metricName, startTS, endTS, dataByTs)
 		if err != nil {
 			continue
 		}
@@ -1998,7 +1998,7 @@ func isNaN(f float64) bool {
 	return f != f
 }
 
-func parsePromFileForTimeSeries(filePath string, startTS, endTS int64, dataByTs map[int64]float64) error {
+func parsePromFileForTimeSeries(filePath, metricName string, startTS, endTS int64, dataByTs map[int64]float64) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return err
@@ -2012,6 +2012,9 @@ func parsePromFileForTimeSeries(filePath string, startTS, endTS int64, dataByTs 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		if shouldSkipMetricLine(metricName, line) {
 			continue
 		}
 
@@ -2045,6 +2048,19 @@ func parsePromFileForTimeSeries(filePath string, startTS, endTS int64, dataByTs 
 	}
 
 	return scanner.Err()
+}
+
+// shouldSkipMetricLine filters out noisy label-variants that are not part of
+// the target workload signal used by anomaly detection.
+func shouldSkipMetricLine(metricName, line string) bool {
+	switch metricName {
+	case "tidb_server_query_total":
+		// Keep only successful query series for workload QPS signal.
+		if strings.Contains(line, `result="`) && !strings.Contains(line, `result="OK"`) {
+			return true
+		}
+	}
+	return false
 }
 
 func parsePromFileForHistogram(filePath string, startTS, endTS int64, dataByTs map[int64]map[string]float64) error {
