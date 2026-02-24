@@ -1,107 +1,107 @@
-etcd_disk_backend_commit_duration_seconds_bucket	histogram
-etcd_disk_backend_commit_duration_seconds_count	histogram
-etcd_disk_wal_fsync_duration_seconds_bucket	histogram
-etcd_disk_wal_fsync_duration_seconds_count	histogram
-etcd_mvcc_db_total_size_in_bytes	gauge
-etcd_mvcc_db_total_size_in_use_in_bytes	gauge
-etcd_network_peer_round_trip_time_seconds_bucket	histogram
-go_goroutines	gauge
-go_memstats_heap_alloc_bytes	gauge
-go_memstats_heap_idle_bytes	gauge
-go_memstats_heap_inuse_bytes	gauge
-go_memstats_heap_released_bytes	gauge
-go_memstats_heap_sys_bytes	gauge
-go_memstats_next_gc_bytes	gauge
-grpc_server_handling_seconds_bucket	histogram
-grpc_server_handling_seconds_count	histogram
-pd_checker_event_count	counter
-pd_checker_patrol_regions_time	gauge
-pd_client_request_handle_requests_duration_seconds_bucket	histogram
-pd_client_request_handle_requests_duration_seconds_count	histogram
-pd_client_request_handle_requests_duration_seconds_sum	histogram
-pd_client_request_handle_tso_batch_size_bucket	histogram
-pd_client_request_handle_tso_batch_size_count	histogram
-pd_client_request_handle_tso_batch_size_sum	histogram
-pd_cluster_eta	gauge
-pd_cluster_id	gauge
-pd_cluster_metadata	gauge
-pd_cluster_placement_status	gauge
-pd_cluster_progress	gauge
-pd_cluster_region_event	counter
-pd_cluster_speed	gauge
-pd_cluster_status	gauge
-pd_cluster_tso	gauge
-pd_cluster_tso_gap_millionseconds	gauge
-pd_config_status	gauge
-pd_core_acquire_regions_lock_wait_duration_seconds_sum	counter
-pd_core_region_heartbeat_breakdown_handle_duration_seconds_sum	counter
-pd_hbstream_region_message	counter
-pd_hotcache_flow_queue_status	gauge
-pd_hotcache_status	gauge
-pd_hotspot_status	gauge
-pd_ratelimit_runner_failed_tasks_total	counter
-pd_ratelimit_runner_pending_tasks	gauge
-pd_ratelimit_runner_task_max_waiting_duration_seconds	gauge
-pd_region_syncer_status	gauge
-pd_regions_label_level	gauge
-pd_regions_status	gauge
-pd_replication_dr_recover_progress	gauge
-pd_replication_dr_recovered_region	gauge
-pd_replication_dr_state	gauge
-pd_replication_dr_state_id	gauge
-pd_replication_dr_tick_total	counter
-pd_rule_manager_status	gauge
-pd_schedule_filter	counter
-pd_schedule_finish_operator_steps_duration_seconds_bucket	histogram
-pd_schedule_finish_operators_duration_seconds_bucket	histogram
-pd_schedule_operator_exceeded_store_limit	counter
-pd_schedule_operator_limit	counter
-pd_schedule_operator_region_size_bucket	histogram
-pd_schedule_operators_count	gauge
-pd_schedule_scatter_distribution	counter
-pd_schedule_scatter_operators_count	counter
-pd_scheduler_balance_direction	counter
-pd_scheduler_buckets_hot_degree_hist_bucket	histogram
-pd_scheduler_event_count	counter
-pd_scheduler_handle_region_heartbeat_duration_seconds_bucket	histogram
-pd_scheduler_handle_region_heartbeat_duration_seconds_count	histogram
-pd_scheduler_handle_region_heartbeat_duration_seconds_sum	histogram
-pd_scheduler_handle_store_heartbeat_duration_seconds_bucket	histogram
-pd_scheduler_hot_peers_summary	gauge
-pd_scheduler_hot_region	counter
-pd_scheduler_hot_region_direction	counter
-pd_scheduler_op_influence	gauge
-pd_scheduler_read_byte_hist_bucket	histogram
-pd_scheduler_read_key_hist_bucket	histogram
-pd_scheduler_region_heartbeat	counter
-pd_scheduler_region_heartbeat_interval_hist_bucket	histogram
-pd_scheduler_status	gauge
-pd_scheduler_store_heartbeat_interval_hist_bucket	histogram
-pd_scheduler_store_status	gauge
-pd_scheduler_tolerant_resource	gauge
-pd_scheduler_write_byte_hist_bucket	histogram
-pd_scheduler_write_key_hist_bucket	histogram
-pd_scheduling_allowance_status	gauge
-pd_server_api_concurrency	gauge
-pd_server_bucket_report	counter
-pd_server_bucket_report_interval_seconds_bucket	histogram
-pd_server_etcd_client	gauge
-pd_server_etcd_endpoint_latency_seconds_bucket	histogram
-pd_server_etcd_state	gauge
-pd_server_handle_tso_duration_seconds_bucket	histogram
-pd_server_handle_tso_duration_seconds_count	histogram
-pd_service_audit_handling_seconds_bucket	histogram
-pd_service_audit_handling_seconds_count	histogram
-pd_service_maxprocs	gauge
-pd_service_memory_quota_bytes	gauge
-pd_tso_events	gauge
-pd_txn_handle_txns_duration_seconds_bucket	histogram
-pd_txn_handle_txns_duration_seconds_count	histogram
-process_cpu_seconds_total	counter
-process_resident_memory_bytes	gauge
-process_start_time_seconds	gauge
-service_member_role	gauge
-tikv_pd_heartbeat_message_total	counter
-tikv_pd_pending_heartbeat_total	counter
-tso_server_handle_tso_duration_seconds_bucket	histogram
-tso_server_handle_tso_duration_seconds_count	histogram
+etcd_disk_backend_commit_duration_seconds_bucket	histogram	Histogram of backend commit duration for etcd's boltdb
+etcd_disk_backend_commit_duration_seconds_count	histogram	Count of backend commit operations for etcd's boltdb
+etcd_disk_wal_fsync_duration_seconds_bucket	histogram	Histogram of WAL fsync duration for etcd disk I/O
+etcd_disk_wal_fsync_duration_seconds_count	histogram	Count of WAL fsync operations for etcd
+etcd_mvcc_db_total_size_in_bytes	gauge	Total size of etcd MVCC database in bytes
+etcd_mvcc_db_total_size_in_use_in_bytes	gauge	Size of etcd MVCC database actually in use in bytes
+etcd_network_peer_round_trip_time_seconds_bucket	histogram	Histogram of round-trip time between etcd peers
+go_goroutines	gauge	Number of goroutines in PD process
+go_memstats_heap_alloc_bytes	gauge	Bytes of allocated heap objects
+go_memstats_heap_idle_bytes	gauge	Bytes in idle spans
+go_memstats_heap_inuse_bytes	gauge	Bytes in in-use spans
+go_memstats_heap_released_bytes	gauge	Bytes released to the OS
+go_memstats_heap_sys_bytes	gauge	Bytes of heap memory obtained from the OS
+go_memstats_next_gc_bytes	gauge	Bytes of heap when next GC will trigger
+grpc_server_handling_seconds_bucket	histogram	Histogram of gRPC server request handling time
+grpc_server_handling_seconds_count	histogram	Count of gRPC server requests handled
+pd_checker_event_count	counter	Counter of checker events (rule_checker, replica_checker, merge_checker, etc.)
+pd_checker_patrol_regions_time	gauge	Time spent on patrol checks for regions
+pd_client_request_handle_requests_duration_seconds_bucket	histogram	Histogram of PD client request processing time
+pd_client_request_handle_requests_duration_seconds_count	histogram	Count of PD client requests handled
+pd_client_request_handle_requests_duration_seconds_sum	histogram	Total time spent handling PD client requests
+pd_client_request_handle_tso_batch_size_bucket	histogram	Histogram of TSO request batch sizes
+pd_client_request_handle_tso_batch_size_count	histogram	Count of TSO batches processed
+pd_client_request_handle_tso_batch_size_sum	histogram	Total size of TSO batches processed
+pd_cluster_eta	gauge	Estimated time of arrival for store preparing/removing actions
+pd_cluster_id	gauge	Unique identifier of the cluster
+pd_cluster_metadata	gauge	Cluster metadata information
+pd_cluster_placement_status	gauge	Placement rule status for the cluster
+pd_cluster_progress	gauge	Current progress of store preparing/removing actions
+pd_cluster_region_event	counter	Counter of region events (create, update, remove)
+pd_cluster_speed	gauge	Current speed of store preparing/removing actions
+pd_cluster_status	gauge	Cluster status including store counts, region counts, storage size/capacity
+pd_cluster_tso	gauge	TSO metadata (timestamp oracle physical time)
+pd_cluster_tso_gap_millionseconds	gauge	Minimal non-zero TSO gap for each DC in milliseconds
+pd_config_status	gauge	Scheduling configuration values (leader-schedule-limit, max-replicas, etc.)
+pd_core_acquire_regions_lock_wait_duration_seconds_sum	counter	Total time waiting to acquire regions lock
+pd_core_region_heartbeat_breakdown_handle_duration_seconds_sum	counter	Total time for heartbeat stages (PreCheck, AsyncHotStats, RegionGuide, SaveCache)
+pd_hbstream_region_message	counter	Counter of heartbeat stream messages sent to TiKV nodes
+pd_hotcache_flow_queue_status	gauge	Hotspot flow queue status (pending read/write tasks)
+pd_hotcache_status	gauge	Hotspot status per store (add_item, remove_item, update_item, thresholds, total_length)
+pd_hotspot_status	gauge	Hotspot status per store (total read/write bytes, keys, queries, hot regions count)
+pd_ratelimit_runner_failed_tasks_total	counter	Counter of failed tasks in rate limit runner
+pd_ratelimit_runner_pending_tasks	gauge	Number of pending tasks in rate limit runner
+pd_ratelimit_runner_task_max_waiting_duration_seconds	gauge	Max waiting duration of tasks in rate limit runner
+pd_region_syncer_status	gauge	Region syncer status (sync_index, first_index, last_index)
+pd_regions_label_level	gauge	Number of regions in different label isolation levels
+pd_regions_status	gauge	Region status (miss-peer, extra-peer, down-peer, pending-peer, offline-peer, learner, empty, oversized, undersized regions)
+pd_replication_dr_recover_progress	gauge	Sync recover process progress for DR
+pd_replication_dr_recovered_region	gauge	Number of recovered regions during DR sync_recover
+pd_replication_dr_state	gauge	DR (Disaster Recovery) state
+pd_replication_dr_state_id	gauge	DR state ID
+pd_replication_dr_tick_total	counter	Counter of DR background state check ticks
+pd_rule_manager_status	gauge	Placement rule status (rule_count, group_count)
+pd_schedule_filter	counter	Counter of filter actions during scheduling (why regions/stores were filtered)
+pd_schedule_finish_operator_steps_duration_seconds_bucket	histogram	Histogram of time to finish individual operator steps
+pd_schedule_finish_operators_duration_seconds_bucket	histogram	Histogram of total time to finish operators
+pd_schedule_operator_exceeded_store_limit	counter	Counter of operators that exceeded store limits
+pd_schedule_operator_limit	counter	Counter of operators meeting schedule limits
+pd_schedule_operator_region_size_bucket	histogram	Histogram of region sizes for scheduled operators
+pd_schedule_operators_count	gauge	Count of schedule operators by type and event (create, finish, timeout, cancel)
+pd_schedule_scatter_distribution	counter	Counter of distribution in scatter operations per store
+pd_schedule_scatter_operators_count	counter	Counter of region scatter operators
+pd_scheduler_balance_direction	counter	Counter of balance direction for schedulers (source, target)
+pd_scheduler_buckets_hot_degree_hist_bucket	histogram	Histogram of bucket hot degree values
+pd_scheduler_event_count	counter	Counter of scheduler events by scheduler type and event name
+pd_scheduler_handle_region_heartbeat_duration_seconds_bucket	histogram	Histogram of time to handle region heartbeat requests
+pd_scheduler_handle_region_heartbeat_duration_seconds_count	histogram	Count of region heartbeats handled
+pd_scheduler_handle_region_heartbeat_duration_seconds_sum	histogram	Total time handling region heartbeats
+pd_scheduler_handle_store_heartbeat_duration_seconds_bucket	histogram	Histogram of time to handle store heartbeat requests
+pd_scheduler_hot_peers_summary	gauge	Hot peers summary per store (expected rates)
+pd_scheduler_hot_region	counter	Counter of hot region scheduler operations
+pd_scheduler_hot_region_direction	counter	Counter of hot region scheduling direction
+pd_scheduler_op_influence	gauge	Operator influence per scheduler/store/type
+pd_scheduler_read_byte_hist_bucket	histogram	Histogram of region read bytes distribution
+pd_scheduler_read_key_hist_bucket	histogram	Histogram of region read keys distribution
+pd_scheduler_region_heartbeat	counter	Counter of region heartbeats by address/store/type/status
+pd_scheduler_region_heartbeat_interval_hist_bucket	histogram	Histogram of region heartbeat intervals
+pd_scheduler_status	gauge	Scheduler status (paused, disabled) by kind and type
+pd_scheduler_store_heartbeat_interval_hist_bucket	histogram	Histogram of store heartbeat intervals
+pd_scheduler_store_status	gauge	Store status for scheduling (region/leader score, size, count, available/capacity)
+pd_scheduler_tolerant_resource	gauge	Tolerant resource per scheduler
+pd_scheduler_write_byte_hist_bucket	histogram	Histogram of region write bytes distribution
+pd_scheduler_write_key_hist_bucket	histogram	Histogram of region write keys distribution
+pd_scheduling_allowance_status	gauge	Scheduling allowance status (e.g., paused due to joint state)
+pd_server_api_concurrency	gauge	API concurrency by kind and API name
+pd_server_bucket_report	counter	Counter of bucket reports by address/store/type/status
+pd_server_bucket_report_interval_seconds_bucket	histogram	Histogram of bucket report intervals
+pd_server_etcd_client	gauge	Etcd client states (source, type)
+pd_server_etcd_endpoint_latency_seconds_bucket	histogram	Histogram of etcd endpoint health check latency
+pd_server_etcd_state	gauge	Etcd raft states (term, appliedIndex, committedIndex)
+pd_server_handle_tso_duration_seconds_bucket	histogram	Histogram of TSO request handling time
+pd_server_handle_tso_duration_seconds_count	histogram	Count of TSO requests handled
+pd_service_audit_handling_seconds_bucket	histogram	Histogram of service handling performance by service/method
+pd_service_audit_handling_seconds_count	histogram	Count of audited service requests
+pd_service_maxprocs	gauge	GOMAXPROCS value (max CPU cores)
+pd_service_memory_quota_bytes	gauge	Memory quota bytes limit
+pd_tso_events	gauge	Counter of TSO events (sync, skip_sync, reset, overflow, etc.)
+pd_txn_handle_txns_duration_seconds_bucket	histogram	Histogram of transaction handling time
+pd_txn_handle_txns_duration_seconds_count	histogram	Count of transactions handled
+process_cpu_seconds_total	counter	Total CPU seconds consumed by the process
+process_resident_memory_bytes	gauge	Resident memory size in bytes
+process_start_time_seconds	gauge	Start time of the process since Unix epoch
+service_member_role	gauge	Role of the PD member (leader/follower)
+tikv_pd_heartbeat_message_total	counter	Counter of heartbeat messages sent by TiKV to PD
+tikv_pd_pending_heartbeat_total	gauge	Number of pending heartbeat messages in TiKV waiting to be sent to PD
+tso_server_handle_tso_duration_seconds_bucket	histogram	Histogram of TSO request handling time on TSO server
+tso_server_handle_tso_duration_seconds_count	histogram	Count of TSO requests handled on TSO server
