@@ -686,7 +686,11 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, ds
 			}
 			if isNoDataError(err) {
 				logger.LogMetricsArrival(clusterID, metric, currentStart, adjustedEnd, 200, 0, true)
-				currentChunk = maxChunkSize
+				if currentChunk >= maxChunkSize {
+					currentChunk *= 2
+				} else {
+					currentChunk = maxChunkSize
+				}
 				currentStart = adjustedEnd
 				continue
 			}
