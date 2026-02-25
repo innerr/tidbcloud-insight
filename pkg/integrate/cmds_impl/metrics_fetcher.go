@@ -306,7 +306,10 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 			return &TaskResult{
 				Task:         task,
 				Success:      true,
-				EmptyData:    true,
+				NeedMerge:    true,
+				ActualBytes:  0,
+				TargetBytes:  targetBytes,
+				ChunkSize:    task.ChunkSize,
 				IsFirstFetch: task.IsFirstFetch,
 			}
 		}

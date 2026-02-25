@@ -271,16 +271,6 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 		return
 	}
 
-	if result.EmptyData {
-		logger.Warnf("%s returned empty, skipping remaining tasks for this metric", key)
-		q.firstFetchDone[key] = true
-		delete(q.pending, key)
-		q.rebuildAllPendingLocked()
-		q.results = append(q.results, result)
-		q.cond.Broadcast()
-		return
-	}
-
 	if result.Success && result.IsFirstFetch {
 		q.firstFetchDone[key] = true
 	}
@@ -361,34 +351,39 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 	task := result.Task
 	key := q.taskKey(task)
 
-	if result.ActualBytes <= 0 || result.ChunkSize <= 0 || result.TargetBytes <= 0 {
+	if result.ChunkSize <= 0 || result.TargetBytes <= 0 {
 		return
 	}
 
-	ratio := float64(result.ActualBytes) / float64(result.TargetBytes)
-
-	record := q.adjustHistory[key]
-	var targetRatio float64
-	var maxGrowth int
-
-	if record != nil && record.LastAdjust == "split" {
-		if ratio >= 0.25 {
-			return
-		}
-		targetRatio = 0.5
-		maxGrowth = result.ChunkSize * maxMergeMultiplierAfterSplit
+	var estimatedChunkSize int
+	if result.ActualBytes <= 0 {
+		estimatedChunkSize = maxMergeChunkSize
 	} else {
-		if ratio >= 0.4 {
-			return
+		ratio := float64(result.ActualBytes) / float64(result.TargetBytes)
+
+		record := q.adjustHistory[key]
+		var targetRatio float64
+		var maxGrowth int
+
+		if record != nil && record.LastAdjust == "split" {
+			if ratio >= 0.25 {
+				return
+			}
+			targetRatio = 0.5
+			maxGrowth = result.ChunkSize * maxMergeMultiplierAfterSplit
+		} else {
+			if ratio >= 0.4 {
+				return
+			}
+			targetRatio = 0.7
+			maxGrowth = result.ChunkSize * maxMergeMultiplier
 		}
-		targetRatio = 0.7
-		maxGrowth = result.ChunkSize * maxMergeMultiplier
-	}
 
-	estimatedChunkSize := int(float64(result.ChunkSize) * float64(result.TargetBytes) * targetRatio / float64(result.ActualBytes))
+		estimatedChunkSize = int(float64(result.ChunkSize) * float64(result.TargetBytes) * targetRatio / float64(result.ActualBytes))
 
-	if estimatedChunkSize > maxGrowth {
-		estimatedChunkSize = maxGrowth
+		if estimatedChunkSize > maxGrowth {
+			estimatedChunkSize = maxGrowth
+		}
 	}
 
 	if estimatedChunkSize > maxMergeChunkSize {
@@ -399,8 +394,11 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 		return
 	}
 
-	logger.Warnf("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target %d bytes, ratio %.2f)",
-		key, result.ChunkSize, estimatedChunkSize, result.ActualBytes, result.TargetBytes, ratio)
+	if result.ActualBytes <= 0 {
+		logger.Warnf("Merging tasks for %s: chunk size %d -> %d (empty data)", key, result.ChunkSize, estimatedChunkSize)
+	} else {
+		logger.Warnf("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target %d bytes)", key, result.ChunkSize, estimatedChunkSize, result.ActualBytes, result.TargetBytes)
+	}
 
 	q.adjustHistory[key] = &AdjustRecord{LastAdjust: "merge"}
 	q.chunkSizeCache[key] = estimatedChunkSize
