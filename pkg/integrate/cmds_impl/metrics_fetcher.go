@@ -153,7 +153,7 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 
 	var tasks []*FetchTask
 
-	f.cacheMu.RLock()
+	f.cacheMu.Lock()
 	for _, metric := range metrics {
 		existingRanges, err := f.storage.GetExistingTimeRanges(clusterID, metric)
 		if err != nil {
@@ -192,7 +192,7 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 			})
 		}
 	}
-	f.cacheMu.RUnlock()
+	f.cacheMu.Unlock()
 
 	if len(tasks) == 0 {
 		return result, nil
@@ -386,6 +386,7 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 
 	var tasks []FetchTask
 
+	f.cacheMu.Lock()
 	for _, metric := range metrics {
 		existingRanges, err := f.storage.GetExistingTimeRanges(clusterID, metric)
 		if err != nil {
@@ -416,6 +417,7 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 			})
 		}
 	}
+	f.cacheMu.Unlock()
 
 	if len(tasks) == 0 {
 		if progressChan != nil {

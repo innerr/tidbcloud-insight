@@ -183,6 +183,13 @@ func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 func MetricsFetchWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
 	clusterID string, startTS, endTS int64, metricFilter string, config MetricsFetcherConfig) (int, error) {
 
+	lockPath := filepath.Join(cacheDir, "metrics.fetch."+clusterID+".lock")
+	fl, err := lock.TryLock(lockPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to acquire lock for cluster %s: %w (another fetch may be running)", clusterID, err)
+	}
+	defer fl.Unlock()
+
 	cl, err := NewClient(cacheDir, cp, authMgr)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create client: %w", err)
