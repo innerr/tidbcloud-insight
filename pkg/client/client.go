@@ -648,47 +648,69 @@ type ChunkedMetricResult struct {
 }
 
 func (c *Client) QueryMetricChunked(ctx context.Context, clusterID, dsURL, metric string, start, end, step, chunkSize int) (*ChunkedMetricResult, error) {
-	return c.QueryMetricChunkedWithWriter(ctx, clusterID, dsURL, metric, start, end, step, chunkSize, nil)
+	return c.QueryMetricChunkedWithWriter(ctx, clusterID, dsURL, metric, start, end, step, chunkSize, 0, nil)
 }
 
-func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, dsURL, metric string, start, end, step, chunkSize int, writer MetricWriter) (*ChunkedMetricResult, error) {
+func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, dsURL, metric string, start, end, step, chunkSize int, targetBytes int64, writer MetricWriter) (*ChunkedMetricResult, error) {
 	if chunkSize <= 0 {
 		chunkSize = 1800
 	}
 
-	adjustedEnd := start + chunkSize
-	if adjustedEnd > end {
-		adjustedEnd = end
-	}
-
-	result, _, err := c.QueryMetricWithRetry(ctx, clusterID, dsURL, metric, start, adjustedEnd, step)
-	if err != nil {
-		if isTooManySamplesError(err) {
-			return &ChunkedMetricResult{
-				TooManySamples: true,
-				FailedSize:     chunkSize,
-			}, err
-		}
-		return nil, err
-	}
+	const maxChunkSize = 86400
+	const maxGrowth = 8
 
 	var totalDataSize int
 	var totalByteSize int64
+	currentChunk := chunkSize
 
-	if result != nil && writer != nil {
-		if err := writeResultToWriter(result, writer); err != nil {
+	for currentStart := start; currentStart < end; {
+		adjustedEnd := currentStart + currentChunk
+		if adjustedEnd > end {
+			adjustedEnd = end
+		}
+
+		result, _, err := c.QueryMetricWithRetry(ctx, clusterID, dsURL, metric, currentStart, adjustedEnd, step)
+		if err != nil {
+			if isTooManySamplesError(err) {
+				return &ChunkedMetricResult{
+					TooManySamples: true,
+					FailedSize:     currentChunk,
+				}, err
+			}
 			return nil, err
 		}
-		totalDataSize += estimateDataSize(result)
-		totalByteSize += estimateByteSize(result)
-	}
 
-	if adjustedEnd < end {
-		remaining, _ := c.QueryMetricChunkedWithWriter(ctx, clusterID, dsURL, metric, adjustedEnd, end, step, chunkSize, writer)
-		if remaining != nil {
-			totalDataSize += remaining.DataSize
-			totalByteSize += remaining.ByteSize
+		var chunkByteSize int64
+		if result != nil && writer != nil {
+			if err := writeResultToWriter(result, writer); err != nil {
+				return nil, err
+			}
+			totalDataSize += estimateDataSize(result)
+			chunkByteSize = estimateByteSize(result)
+			totalByteSize += chunkByteSize
 		}
+
+		logger.LogMetricsArrival(clusterID, metric, currentStart, adjustedEnd, 200, chunkByteSize, true)
+
+		if targetBytes > 0 && chunkByteSize > 0 && chunkByteSize < targetBytes/2 {
+			estimatedChunk := int(float64(currentChunk) * float64(targetBytes) * 0.7 / float64(chunkByteSize))
+			if estimatedChunk > currentChunk*maxGrowth {
+				estimatedChunk = currentChunk * maxGrowth
+			}
+			if estimatedChunk > maxChunkSize {
+				estimatedChunk = maxChunkSize
+			}
+			if estimatedChunk > currentChunk {
+				currentChunk = estimatedChunk
+			}
+		} else if chunkByteSize > 0 && chunkByteSize < 512*1024 {
+			newChunk := min(currentChunk*2, maxChunkSize)
+			if newChunk > currentChunk {
+				currentChunk = newChunk
+			}
+		}
+
+		currentStart = adjustedEnd
 	}
 
 	return &ChunkedMetricResult{DataSize: totalDataSize, ByteSize: totalByteSize}, nil
