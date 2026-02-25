@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -305,10 +306,16 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 		httpClient = http.DefaultClient
 	}
 
+	clusterID, apiPath := formatErrorPath(req.URL.Path)
+
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		c.rateLimiter.RecordFailure(0, err)
-		logger.Errorf("%s -> ERROR: %v", req.URL.Path, err)
+		if clusterID != "" {
+			logger.Errorf("%s %s -> ERROR: %v", clusterID, apiPath, err)
+		} else {
+			logger.Errorf("%s -> ERROR: %v", req.URL.Path, err)
+		}
 		return nil, err
 	}
 
@@ -318,14 +325,22 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 			c.authMgr.InvalidateToken()
 		}
 		c.rateLimiter.RecordFailure(resp.StatusCode, fmt.Errorf("unauthorized"))
-		logger.Errorf("%s -> HTTP %d (unauthorized)", req.URL.Path, resp.StatusCode)
+		if clusterID != "" {
+			logger.Errorf("%s %s -> HTTP %d (unauthorized)", clusterID, apiPath, resp.StatusCode)
+		} else {
+			logger.Errorf("%s -> HTTP %d (unauthorized)", req.URL.Path, resp.StatusCode)
+		}
 		return nil, fmt.Errorf("unauthorized: token expired")
 	}
 
 	if resp.StatusCode == 429 || resp.StatusCode == 503 {
 		c.rateLimiter.RecordFailure(resp.StatusCode, nil)
 		_ = resp.Body.Close()
-		logger.Errorf("%s -> HTTP %d (rate limited)", req.URL.Path, resp.StatusCode)
+		if clusterID != "" {
+			logger.Errorf("%s %s -> HTTP %d (rate limited)", clusterID, apiPath, resp.StatusCode)
+		} else {
+			logger.Errorf("%s -> HTTP %d (rate limited)", req.URL.Path, resp.StatusCode)
+		}
 		return nil, fmt.Errorf("rate limited: HTTP %d", resp.StatusCode)
 	}
 
@@ -334,7 +349,11 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request) (*http.Respon
 		_ = resp.Body.Close()
 		bodyStr := string(body)
 		c.rateLimiter.RecordFailure(resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode))
-		logger.Errorf("%s -> HTTP %d: %s", req.URL.Path, resp.StatusCode, bodyStr)
+		if clusterID != "" {
+			logger.Errorf("%s %s -> HTTP %d: %s", clusterID, apiPath, resp.StatusCode, bodyStr)
+		} else {
+			logger.Errorf("%s -> HTTP %d: %s", req.URL.Path, resp.StatusCode, bodyStr)
+		}
 		if resp.StatusCode == 422 && containsMaxSamplesError(bodyStr) {
 			return nil, &TooManySamplesError{StatusCode: resp.StatusCode, Body: bodyStr}
 		}
@@ -1133,6 +1152,20 @@ func isNoDataError(err error) bool {
 		return false
 	}
 	return contains(err.Error(), "no data found")
+}
+
+func formatErrorPath(path string) (clusterID, apiPath string) {
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		if len(p) == 36 && contains(p, "-") {
+			clusterID = p
+			if i+1 < len(parts) {
+				apiPath = "/" + strings.Join(parts[i+1:], "/")
+			}
+			return
+		}
+	}
+	return "", path
 }
 
 func joinStrings(s []string, sep string) string {
