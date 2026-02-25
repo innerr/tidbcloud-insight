@@ -213,7 +213,7 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 	}
 
 	f.cacheMu.Lock()
-	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler, f.chunkSizeCache, f.adjustHistory, f.firstFetchDone)
+	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler, f.chunkSizeCache, f.adjustHistory, f.firstFetchDone, f.cacheSizeTracker, f.config.CacheMaxSizeMB)
 	f.cacheMu.Unlock()
 
 	queue.SubmitBatch(tasks)
@@ -247,7 +247,7 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 }
 
 func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *TaskResult {
-	writer, err := f.storage.NewMetricWriter(task.ClusterID, task.Metric, task.GapStart, task.GapEnd)
+	writer, err := f.storage.NewMetricWriterWithCacheLimit(task.ClusterID, task.Metric, task.GapStart, task.GapEnd, f.config.CacheMaxSizeMB)
 	if err != nil {
 		return &TaskResult{
 			Task:    task,
@@ -293,6 +293,15 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 			}
 		}
 
+		if isCacheLimitError(err) {
+			return &TaskResult{
+				Task:     task,
+				Success:  false,
+				Error:    err,
+				AbortAll: true,
+			}
+		}
+
 		return &TaskResult{
 			Task:    task,
 			Success: false,
@@ -301,6 +310,14 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 	}
 
 	if closeErr := writer.Close(); closeErr != nil {
+		if isCacheLimitError(closeErr) {
+			return &TaskResult{
+				Task:     task,
+				Success:  false,
+				Error:    closeErr,
+				AbortAll: true,
+			}
+		}
 		return &TaskResult{
 			Task:    task,
 			Success: false,
@@ -309,10 +326,6 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 	}
 
 	actualBytes := writer.BytesWritten()
-
-	if actualBytes > 0 {
-		f.cacheSizeTracker.AddBytes(actualBytes)
-	}
 
 	if actualBytes == 0 && task.IsFirstFetch {
 		return &TaskResult{
@@ -360,6 +373,14 @@ func isFatalError(err error) bool {
 	}
 	errStr := err.Error()
 	return contains(errStr, "403") || contains(errStr, "401") || contains(errStr, "unauthorized") || contains(errStr, "forbidden")
+}
+
+func isCacheLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return contains(errStr, "cache limit exceeded")
 }
 
 func contains(s, substr string) bool {

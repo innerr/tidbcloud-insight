@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"tidbcloud-insight/pkg/lock"
+	"tidbcloud-insight/pkg/logger"
 	"tidbcloud-insight/pkg/prometheus_storage"
 )
 
@@ -123,8 +124,22 @@ func MetricsCacheClear(cacheDir string) error {
 
 	fmt.Printf("Clearing metrics cache (%d clusters)...\n", clusterCount)
 
+	if cleaned, err := lock.CleanupTempFiles(cacheDir); err != nil {
+		fmt.Printf("Warning: failed to cleanup temp files: %v\n", err)
+	} else if cleaned > 0 {
+		logger.Infof("cleaned %d temp files", cleaned)
+	}
+
 	if err := os.RemoveAll(metricsDir); err != nil {
 		return fmt.Errorf("failed to clear metrics cache: %w", err)
+	}
+
+	prometheus_storage.GetCacheSizeTracker(metricsDir).Reset()
+
+	if cleaned, err := lock.CleanupStaleLocks(cacheDir); err != nil {
+		fmt.Printf("Warning: failed to cleanup stale locks: %v\n", err)
+	} else if cleaned > 0 {
+		logger.Infof("cleaned %d stale lock files", cleaned)
 	}
 
 	fmt.Printf("Cleared metrics cache: %s\n", metricsDir)
@@ -133,6 +148,7 @@ func MetricsCacheClear(cacheDir string) error {
 
 func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 	metricsDir := filepath.Join(cacheDir, "metrics")
+	tracker := prometheus_storage.GetCacheSizeTracker(metricsDir)
 
 	if metricName != "" {
 		metricDir := filepath.Join(metricsDir, clusterID, metricName)
@@ -145,6 +161,13 @@ func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 			return fmt.Errorf("failed to read metric cache directory: %w", err)
 		}
 
+		var totalSize int64
+		for _, entry := range entries {
+			if info, err := entry.Info(); err == nil {
+				totalSize += info.Size()
+			}
+		}
+
 		fileCount := len(entries)
 		fmt.Printf("Clearing metrics cache for cluster %s, metric %s (%d files)...\n",
 			clusterID, metricName, fileCount)
@@ -152,6 +175,8 @@ func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 		if err := os.RemoveAll(metricDir); err != nil {
 			return fmt.Errorf("failed to clear metric cache: %w", err)
 		}
+
+		tracker.SubBytes(totalSize)
 
 		fmt.Printf("Cleared metrics cache for cluster %s, metric %s\n", clusterID, metricName)
 		return nil
@@ -167,6 +192,14 @@ func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 		return fmt.Errorf("failed to read cluster cache directory: %w", err)
 	}
 
+	var totalSize int64
+	filepath.Walk(clusterDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
 	metricCount := len(entries)
 
 	fmt.Printf("Clearing metrics cache for cluster %s (%d metrics)...\n",
@@ -175,6 +208,8 @@ func MetricsCacheClearCluster(cacheDir, clusterID, metricName string) error {
 	if err := os.RemoveAll(clusterDir); err != nil {
 		return fmt.Errorf("failed to clear cluster metrics cache: %w", err)
 	}
+
+	tracker.SubBytes(totalSize)
 
 	fmt.Printf("Cleared metrics cache for cluster: %s\n", clusterID)
 	return nil
@@ -189,6 +224,12 @@ func MetricsFetchWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *
 		return 0, fmt.Errorf("failed to acquire lock for cluster %s: %w (another fetch may be running)", clusterID, err)
 	}
 	defer fl.Unlock()
+
+	if cleaned, err := lock.CleanupStaleLocks(cacheDir); err != nil {
+		fmt.Printf("Warning: failed to cleanup stale locks: %v\n", err)
+	} else if cleaned > 0 {
+		fmt.Printf("Cleaned %d stale lock files\n", cleaned)
+	}
 
 	cl, err := NewClient(cacheDir, cp, authMgr)
 	if err != nil {
@@ -400,11 +441,17 @@ func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMg
 	}
 	defer fl.Unlock()
 
+	if cleaned, err := lock.CleanupStaleLocks(cacheDir); err != nil {
+		fmt.Printf("Warning: failed to cleanup stale locks: %v\n", err)
+	} else if cleaned > 0 {
+		logger.Infof("cleaned %d stale lock files", cleaned)
+	}
+
 	cleaned, err := lock.CleanupTempFiles(cacheDir)
 	if err != nil {
 		fmt.Printf("Warning: failed to cleanup temp files: %v\n", err)
 	} else if cleaned > 0 {
-		fmt.Printf("Cleaned %d temp files\n", cleaned)
+		logger.Infof("cleaned %d temp files", cleaned)
 	}
 
 	inactive := loadInactiveClusters(cacheDir)

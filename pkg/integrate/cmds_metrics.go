@@ -5,6 +5,7 @@ import (
 	"time"
 
 	impl "tidbcloud-insight/pkg/integrate/cmds_impl"
+	"tidbcloud-insight/pkg/logger"
 
 	"github.com/innerr/ticat/pkg/core/model"
 )
@@ -20,6 +21,8 @@ func MetricsFetchCmd(
 	metaDir := getMetaDir(env)
 	clientParams := getClientParams(env)
 	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
+
+	logger.Infof("max-cache: %d MB", fetcherConfig.CacheMaxSizeMB)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
@@ -59,6 +62,8 @@ func MetricsFetchRandom(
 	clientParams := getClientParams(env)
 	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
 
+	logger.Infof("max-cache: %d MB", fetcherConfig.CacheMaxSizeMB)
+
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
 		return currCmdIdx, fmt.Errorf("invalid time range: %w", err)
@@ -95,6 +100,8 @@ func MetricsFetchAll(
 	metaDir := getMetaDir(env)
 	clientParams := getClientParams(env)
 	fetcherConfig := impl.NewMetricsFetcherConfigFromEnv(env)
+
+	logger.Infof("max-cache: %d MB", fetcherConfig.CacheMaxSizeMB)
 
 	tr, err := getTimeRangeFromEnv(env)
 	if err != nil {
