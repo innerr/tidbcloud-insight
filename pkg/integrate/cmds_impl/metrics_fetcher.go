@@ -302,6 +302,15 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 			}
 		}
 
+		if isNoDataError(err) {
+			return &TaskResult{
+				Task:         task,
+				Success:      true,
+				EmptyData:    true,
+				IsFirstFetch: task.IsFirstFetch,
+			}
+		}
+
 		return &TaskResult{
 			Task:    task,
 			Success: false,
@@ -381,6 +390,14 @@ func isCacheLimitError(err error) bool {
 	}
 	errStr := err.Error()
 	return contains(errStr, "cache limit exceeded")
+}
+
+func isNoDataError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return contains(errStr, "no data found")
 }
 
 func contains(s, substr string) bool {

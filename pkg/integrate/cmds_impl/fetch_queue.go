@@ -271,8 +271,8 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 		return
 	}
 
-	if result.EmptyData && result.IsFirstFetch {
-		logger.Warnf("First fetch for %s returned empty, skipping remaining tasks", key)
+	if result.EmptyData {
+		logger.Warnf("%s returned empty, skipping remaining tasks for this metric", key)
 		q.firstFetchDone[key] = true
 		delete(q.pending, key)
 		q.rebuildAllPendingLocked()
