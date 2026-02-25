@@ -16,11 +16,15 @@ const (
 )
 
 type PrometheusStorage struct {
-	baseDir string
+	baseDir          string
+	cacheSizeTracker *CacheSizeTracker
 }
 
 func NewPrometheusStorage(baseDir string) *PrometheusStorage {
-	return &PrometheusStorage{baseDir: baseDir}
+	return &PrometheusStorage{
+		baseDir:          baseDir,
+		cacheSizeTracker: GetCacheSizeTracker(baseDir),
+	}
 }
 
 func (s *PrometheusStorage) GetMetricDir(clusterID, metricName string) string {
@@ -463,8 +467,14 @@ func (s *PrometheusStorage) MergeAdjacentFiles(clusterID, metricName string) err
 					continue
 				}
 
+				s.cacheSizeTracker.SubBytes(curr.size)
+				s.cacheSizeTracker.SubBytes(next.size)
 				_ = os.Remove(curr.path)
 				_ = os.Remove(next.path)
+
+				if mergedInfo, err := os.Stat(mergedPath); err == nil {
+					s.cacheSizeTracker.AddBytes(mergedInfo.Size())
+				}
 
 				fileInfos[i+1].path = mergedPath
 				fileInfos[i+1].minTime = curr.minTime

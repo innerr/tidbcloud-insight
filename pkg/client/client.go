@@ -636,6 +636,7 @@ func (c *Client) readBodyWithIdleTimeout(ctx context.Context, body io.Reader) ([
 
 type MetricWriter interface {
 	WriteSeries(labels map[string]string, timestamps []int64, values []float64) error
+	CheckCacheLimit() error
 	Close() error
 }
 
@@ -667,6 +668,12 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, ds
 		adjustedEnd := currentStart + currentChunk
 		if adjustedEnd > end {
 			adjustedEnd = end
+		}
+
+		if writer != nil {
+			if err := writer.CheckCacheLimit(); err != nil {
+				return nil, err
+			}
 		}
 
 		result, _, err := c.QueryMetricWithRetry(ctx, clusterID, dsURL, metric, currentStart, adjustedEnd, step)

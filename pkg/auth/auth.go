@@ -78,7 +78,7 @@ func (m *Manager) loadFromCache() {
 		m.expiry = cache.Expiry
 		m.lastTokenSource = "cache"
 		m.mu.Unlock()
-		logger.Infof("[Auth] token loaded from cache, expires in %v", time.Until(cache.Expiry).Round(time.Second))
+		logger.Infof("token loaded from cache, expires in %v", time.Until(cache.Expiry).Round(time.Second))
 	}
 }
 
@@ -106,7 +106,7 @@ func (m *Manager) saveToCache() error {
 	if err := os.WriteFile(m.cachePath, data, 0600); err != nil {
 		return err
 	}
-	logger.Infof("[Auth] token saved to cache file: %s", m.cachePath)
+	logger.Infof("token saved to cache file: %s", m.cachePath)
 	return nil
 }
 
@@ -155,7 +155,7 @@ func (m *Manager) fetchNewToken() error {
 	m.lastTokenSource = "remote"
 	m.mu.Unlock()
 
-	logger.Infof("[Auth] token acquired from remote, expires in %v", time.Duration(result.ExpiresIn-60)*time.Second)
+	logger.Infof("token acquired from remote, expires in %v", time.Duration(result.ExpiresIn-60)*time.Second)
 
 	_ = m.saveToCache()
 
@@ -203,7 +203,7 @@ func (m *Manager) GetToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	logger.Infof("[Auth] token acquired from %s", m.GetTokenSource())
+	logger.Infof("token acquired from %s", m.GetTokenSource())
 	return token, nil
 }
 
@@ -279,7 +279,7 @@ func (m *Manager) checkAndRefreshToken() {
 	refreshThreshold := 5 * time.Minute
 
 	if timeUntilExpiry < refreshThreshold {
-		logger.Infof("[Auth] token expiring in %v, refreshing proactively", timeUntilExpiry)
+		logger.Infof("token expiring in %v, refreshing proactively", timeUntilExpiry)
 		_, _ = m.getTokenWithRefresh()
 	}
 }

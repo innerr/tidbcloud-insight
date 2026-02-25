@@ -16,25 +16,31 @@ type chunkData struct {
 }
 
 type PrometheusMetricWriter struct {
-	mu         sync.Mutex
-	storage    *PrometheusStorage
-	clusterID  string
-	metricName string
-	gapStartTS int64
-	gapEndTS   int64
+	mu             sync.Mutex
+	storage        *PrometheusStorage
+	clusterID      string
+	metricName     string
+	gapStartTS     int64
+	gapEndTS       int64
+	cacheMaxSizeMB int
 
 	nextExpectedTS int64
 	pendingChunks  map[int64]*chunkData
 
-	tmpFile      *os.File
-	bufWriter    *bufio.Writer
-	tmpFilePath  string
-	finalPath    string
-	bytesWritten int64
-	closed       bool
+	tmpFile             *os.File
+	bufWriter           *bufio.Writer
+	tmpFilePath         string
+	finalPath           string
+	bytesWritten        int64
+	bytesAddedToTracker int64
+	closed              bool
 }
 
 func (s *PrometheusStorage) NewMetricWriter(clusterID, metricName string, gapStartTS, gapEndTS int64) (*PrometheusMetricWriter, error) {
+	return s.NewMetricWriterWithCacheLimit(clusterID, metricName, gapStartTS, gapEndTS, 0)
+}
+
+func (s *PrometheusStorage) NewMetricWriterWithCacheLimit(clusterID, metricName string, gapStartTS, gapEndTS int64, cacheMaxSizeMB int) (*PrometheusMetricWriter, error) {
 	metricDir := s.GetMetricDir(clusterID, metricName)
 	if err := os.MkdirAll(metricDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create metric directory: %w", err)
@@ -63,6 +69,7 @@ func (s *PrometheusStorage) NewMetricWriter(clusterID, metricName string, gapSta
 		metricName:     metricName,
 		gapStartTS:     gapStartTS,
 		gapEndTS:       gapEndTS,
+		cacheMaxSizeMB: cacheMaxSizeMB,
 		nextExpectedTS: gapStartTS,
 		pendingChunks:  make(map[int64]*chunkData),
 		tmpFile:        tmpFile,
@@ -102,6 +109,12 @@ func (w *PrometheusMetricWriter) WriteSeries(labels map[string]string, timestamp
 	}
 
 	return w.trySlideWindow()
+}
+
+func (w *PrometheusMetricWriter) estimatePendingSize() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.estimatePendingSizeLocked()
 }
 
 func (w *PrometheusMetricWriter) getOrCreateChunk(startTS, endTS int64) *chunkData {
@@ -153,6 +166,14 @@ func (w *PrometheusMetricWriter) trySlideWindow() error {
 			break
 		}
 
+		if w.cacheMaxSizeMB > 0 && w.storage.cacheSizeTracker != nil {
+			currentSize, _ := w.storage.cacheSizeTracker.GetSize()
+			maxSizeBytes := int64(w.cacheMaxSizeMB) * 1024 * 1024
+			if currentSize >= maxSizeBytes {
+				return fmt.Errorf("cache limit exceeded: size %d MB >= limit %d MB", currentSize/(1024*1024), w.cacheMaxSizeMB)
+			}
+		}
+
 		if err := w.writeChunkToFile(chunk); err != nil {
 			return err
 		}
@@ -199,6 +220,17 @@ func (w *PrometheusMetricWriter) writeChunkToFile(chunk *chunkData) error {
 			w.bytesWritten += int64(n)
 		}
 		w.bufWriter.WriteString("\n")
+		w.bytesWritten++
+	}
+
+	if w.cacheMaxSizeMB > 0 && w.storage.cacheSizeTracker != nil && w.bytesWritten > w.bytesAddedToTracker {
+		newBytes := w.bytesWritten - w.bytesAddedToTracker
+		_, err := w.storage.cacheSizeTracker.CheckLimit(w.cacheMaxSizeMB)
+		if err != nil {
+			return fmt.Errorf("cache limit exceeded: %w", err)
+		}
+		w.storage.cacheSizeTracker.AddBytes(newBytes)
+		w.bytesAddedToTracker = w.bytesWritten
 	}
 
 	return nil
@@ -218,7 +250,6 @@ func (w *PrometheusMetricWriter) Close() error {
 	if w.closed {
 		return nil
 	}
-	w.closed = true
 
 	if len(w.pendingChunks) > 0 {
 		var pendingStarts []int64
@@ -230,6 +261,8 @@ func (w *PrometheusMetricWriter) Close() error {
 		for _, start := range pendingStarts {
 			chunk := w.pendingChunks[start]
 			if err := w.writeChunkToFile(chunk); err != nil {
+				w.closed = true
+				w.rollbackBytes()
 				w.tmpFile.Close()
 				os.Remove(w.tmpFilePath)
 				return err
@@ -239,22 +272,36 @@ func (w *PrometheusMetricWriter) Close() error {
 	}
 
 	if err := w.flush(); err != nil {
+		w.closed = true
+		w.rollbackBytes()
 		w.tmpFile.Close()
 		os.Remove(w.tmpFilePath)
 		return fmt.Errorf("failed to flush: %w", err)
 	}
 
 	if err := w.tmpFile.Close(); err != nil {
+		w.closed = true
+		w.rollbackBytes()
 		os.Remove(w.tmpFilePath)
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	if err := os.Rename(w.tmpFilePath, w.finalPath); err != nil {
+		w.closed = true
+		w.rollbackBytes()
 		os.Remove(w.tmpFilePath)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
+	w.closed = true
 	return nil
+}
+
+func (w *PrometheusMetricWriter) rollbackBytes() {
+	if w.bytesAddedToTracker > 0 && w.storage.cacheSizeTracker != nil {
+		w.storage.cacheSizeTracker.SubBytes(w.bytesAddedToTracker)
+		w.bytesAddedToTracker = 0
+	}
 }
 
 func (w *PrometheusMetricWriter) Abort() {
@@ -265,6 +312,10 @@ func (w *PrometheusMetricWriter) Abort() {
 		return
 	}
 	w.closed = true
+
+	if w.bytesAddedToTracker > 0 && w.storage.cacheSizeTracker != nil {
+		w.storage.cacheSizeTracker.SubBytes(w.bytesAddedToTracker)
+	}
 
 	if w.bufWriter != nil {
 		_ = w.bufWriter.Flush()
@@ -281,6 +332,34 @@ func (w *PrometheusMetricWriter) BytesWritten() int64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.bytesWritten
+}
+
+func (w *PrometheusMetricWriter) CheckCacheLimit() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return fmt.Errorf("writer already closed")
+	}
+
+	if w.cacheMaxSizeMB > 0 && w.storage.cacheSizeTracker != nil {
+		currentSize, _ := w.storage.cacheSizeTracker.GetSize()
+		maxSizeBytes := int64(w.cacheMaxSizeMB) * 1024 * 1024
+		if currentSize >= maxSizeBytes {
+			return fmt.Errorf("cache limit exceeded: current %d MB >= limit %d MB", currentSize/(1024*1024), w.cacheMaxSizeMB)
+		}
+	}
+	return nil
+}
+
+func (w *PrometheusMetricWriter) estimatePendingSizeLocked() int64 {
+	var size int64
+	for _, chunk := range w.pendingChunks {
+		for labelKey, tsMap := range chunk.seriesData {
+			size += int64(len(labelKey) + len(tsMap)*100)
+		}
+	}
+	return size
 }
 
 func (w *PrometheusMetricWriter) GapTimeRange() (int64, int64) {

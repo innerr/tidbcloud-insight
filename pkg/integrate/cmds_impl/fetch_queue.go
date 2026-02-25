@@ -27,6 +27,7 @@ type TaskResult struct {
 	NeedSplit    bool
 	FailedSize   int
 	AbortCluster bool
+	AbortAll     bool
 	NeedMerge    bool
 	ActualBytes  int64
 	TargetBytes  int64
@@ -36,6 +37,10 @@ type TaskResult struct {
 }
 
 type TaskHandler func(ctx context.Context, task *FetchTask) *TaskResult
+
+type CacheLimitChecker interface {
+	CheckLimit(maxSizeMB int) (int64, error)
+}
 
 type FetchQueue struct {
 	mu     sync.Mutex
@@ -59,11 +64,15 @@ type FetchQueue struct {
 
 	handler TaskHandler
 
+	cacheLimitChecker CacheLimitChecker
+	cacheMaxSizeMB    int
+
 	wg sync.WaitGroup
 }
 
 func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler,
-	chunkSizeCache map[string]int, adjustHistory map[string]*AdjustRecord, firstFetchDone map[string]bool) *FetchQueue {
+	chunkSizeCache map[string]int, adjustHistory map[string]*AdjustRecord, firstFetchDone map[string]bool,
+	cacheLimitChecker CacheLimitChecker, cacheMaxSizeMB int) *FetchQueue {
 	ctx, cancel := context.WithCancel(parentCtx)
 
 	if chunkSizeCache == nil {
@@ -77,15 +86,17 @@ func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler,
 	}
 
 	q := &FetchQueue{
-		ctx:             ctx,
-		cancel:          cancel,
-		pending:         make(map[string][]*FetchTask),
-		chunkSizeCache:  chunkSizeCache,
-		adjustHistory:   adjustHistory,
-		firstFetchDone:  firstFetchDone,
-		abortedClusters: make(map[string]bool),
-		workers:         workers,
-		handler:         handler,
+		ctx:               ctx,
+		cancel:            cancel,
+		pending:           make(map[string][]*FetchTask),
+		chunkSizeCache:    chunkSizeCache,
+		adjustHistory:     adjustHistory,
+		firstFetchDone:    firstFetchDone,
+		abortedClusters:   make(map[string]bool),
+		workers:           workers,
+		handler:           handler,
+		cacheLimitChecker: cacheLimitChecker,
+		cacheMaxSizeMB:    cacheMaxSizeMB,
 	}
 	q.cond = sync.NewCond(&q.mu)
 
@@ -159,6 +170,20 @@ func (q *FetchQueue) worker(id int) {
 			return
 		}
 
+		if q.cacheLimitChecker != nil && q.cacheMaxSizeMB > 0 {
+			_, err := q.cacheLimitChecker.CheckLimit(q.cacheMaxSizeMB)
+			if err != nil {
+				result := &TaskResult{
+					Task:     task,
+					Success:  false,
+					Error:    err,
+					AbortAll: true,
+				}
+				q.completeTask(result)
+				continue
+			}
+		}
+
 		result := q.handler(q.ctx, task)
 		if result == nil {
 			result = &TaskResult{
@@ -224,6 +249,20 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 		return
 	}
 
+	if result.AbortAll {
+		logger.Warnf("Aborting all tasks due to cache limit exceeded: %v", result.Error)
+		q.abortedClusters[task.ClusterID] = true
+		q.pending = make(map[string][]*FetchTask)
+		q.allPending = nil
+		q.results = append(q.results, result)
+		q.stopped = true
+		if q.cancel != nil {
+			q.cancel()
+		}
+		q.cond.Broadcast()
+		return
+	}
+
 	if result.AbortCluster {
 		logger.Warnf("Aborting cluster %s due to fatal error: %v", task.ClusterID, result.Error)
 		q.abortedClusters[task.ClusterID] = true
@@ -263,6 +302,21 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 	}
 
 	q.results = append(q.results, result)
+
+	if q.cacheLimitChecker != nil && q.cacheMaxSizeMB > 0 {
+		_, err := q.cacheLimitChecker.CheckLimit(q.cacheMaxSizeMB)
+		if err != nil {
+			logger.Warnf("Aborting all tasks due to cache limit exceeded: %v", err)
+			q.abortedClusters[task.ClusterID] = true
+			q.pending = make(map[string][]*FetchTask)
+			q.allPending = nil
+			q.stopped = true
+			if q.cancel != nil {
+				q.cancel()
+			}
+		}
+	}
+
 	q.cond.Broadcast()
 }
 

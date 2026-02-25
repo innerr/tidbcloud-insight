@@ -5,15 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 type CacheSizeTracker struct {
-	mu             sync.RWMutex
-	baseDir        string
-	cachedSize     int64
-	lastCalculated time.Time
-	dirty          bool
+	mu          sync.RWMutex
+	baseDir     string
+	cachedSize  int64
+	initialized bool
 }
 
 var (
@@ -24,36 +22,26 @@ var (
 func GetCacheSizeTracker(baseDir string) *CacheSizeTracker {
 	globalTrackerOnce.Do(func() {
 		globalTracker = &CacheSizeTracker{
-			baseDir:    baseDir,
-			cachedSize: -1,
-			dirty:      true,
+			baseDir: baseDir,
 		}
 	})
 	if globalTracker.baseDir != baseDir {
 		globalTracker.mu.Lock()
 		globalTracker.baseDir = baseDir
-		globalTracker.cachedSize = -1
-		globalTracker.dirty = true
+		globalTracker.cachedSize = 0
+		globalTracker.initialized = false
 		globalTracker.mu.Unlock()
 	}
 	return globalTracker
 }
 
-func (t *CacheSizeTracker) GetSize() (int64, error) {
-	t.mu.RLock()
-	if !t.dirty && t.cachedSize >= 0 && time.Since(t.lastCalculated) < 5*time.Minute {
-		size := t.cachedSize
-		t.mu.RUnlock()
-		return size, nil
-	}
-	t.mu.RUnlock()
-
-	return t.RecalculateSize()
-}
-
-func (t *CacheSizeTracker) RecalculateSize() (int64, error) {
+func (t *CacheSizeTracker) Init() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if t.initialized {
+		return nil
+	}
 
 	var totalSize int64
 	metricsDir := t.baseDir
@@ -72,21 +60,46 @@ func (t *CacheSizeTracker) RecalculateSize() (int64, error) {
 	})
 
 	if err != nil {
-		return 0, fmt.Errorf("failed to calculate cache size: %w", err)
+		return fmt.Errorf("failed to calculate cache size: %w", err)
 	}
 
 	t.cachedSize = totalSize
-	t.lastCalculated = time.Now()
-	t.dirty = false
+	t.initialized = true
 
-	return totalSize, nil
+	return nil
+}
+
+func (t *CacheSizeTracker) GetSize() (int64, error) {
+	t.mu.RLock()
+	if t.initialized {
+		size := t.cachedSize
+		t.mu.RUnlock()
+		return size, nil
+	}
+	t.mu.RUnlock()
+
+	if err := t.Init(); err != nil {
+		return 0, err
+	}
+
+	t.mu.RLock()
+	size := t.cachedSize
+	t.mu.RUnlock()
+	return size, nil
 }
 
 func (t *CacheSizeTracker) AddBytes(bytes int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cachedSize >= 0 {
-		t.cachedSize += bytes
+	t.cachedSize += bytes
+}
+
+func (t *CacheSizeTracker) SubBytes(bytes int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cachedSize -= bytes
+	if t.cachedSize < 0 {
+		t.cachedSize = 0
 	}
 }
 
@@ -108,10 +121,11 @@ func (t *CacheSizeTracker) CheckLimit(maxSizeMB int) (int64, error) {
 	return currentSize, nil
 }
 
-func (t *CacheSizeTracker) MarkDirty() {
+func (t *CacheSizeTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.dirty = true
+	t.cachedSize = 0
+	t.initialized = false
 }
 
 func (t *CacheSizeTracker) FormatSize(bytes int64) string {
