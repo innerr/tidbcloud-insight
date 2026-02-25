@@ -510,6 +510,10 @@ func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMg
 		if err != nil {
 			fmt.Printf("  ERROR: %v\n", err)
 			failCount++
+			if strings.Contains(err.Error(), "cache limit exceeded") {
+				fmt.Println("Cache limit exceeded, stopping fetch.all")
+				break
+			}
 		} else {
 			successCount++
 		}
