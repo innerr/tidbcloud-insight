@@ -382,6 +382,9 @@ func (c *Client) doRequestWithRetry(ctx context.Context, req *http.Request, maxR
 		if c.authMgr == nil {
 			resp, err := c.doRequest(ctx, req)
 			if err != nil {
+				if _, ok := err.(*TooManySamplesError); ok {
+					return nil, err
+				}
 				lastErr = err
 				continue
 			}
@@ -399,6 +402,9 @@ func (c *Client) doRequestWithRetry(ctx context.Context, req *http.Request, maxR
 
 		resp, err := c.doRequest(ctx, reqClone)
 		if err != nil {
+			if _, ok := err.(*TooManySamplesError); ok {
+				return nil, err
+			}
 			lastErr = err
 			continue
 		}
@@ -850,6 +856,9 @@ func (c *Client) QueryMetricWithRetry(ctx context.Context, clusterID, dsURL, met
 	for _, step := range stepsToTry {
 		result, err := c.QueryMetric(ctx, clusterID, dsURL, metric, start, end, step)
 		if err != nil {
+			if isTooManySamplesError(err) {
+				return nil, step, err
+			}
 			continue
 		}
 

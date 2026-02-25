@@ -10,7 +10,7 @@ import (
 	"tidbcloud-insight/pkg/logger"
 )
 
-const minChunkSize = 300        // 5 minutes
+const minChunkSize = 120        // 2 minutes (must be >= default step of 120s)
 const initialChunkSize = 1800   // 30 minutes, for first fetch
 const maxMergeChunkSize = 86400 // 1 day
 const maxMergeMultiplier = 8    // max 8x growth per merge
