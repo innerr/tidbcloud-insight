@@ -2,7 +2,7 @@ module tidbcloud-insight
 
 go 1.21
 
-require github.com/innerr/ticat v1.4.1-0.20260224234928-efcfbd7a2914
+require github.com/innerr/ticat v1.4.1-0.20260225053738-51a01692d56a
 
 require (
 	github.com/mattn/go-runewidth v0.0.3 // indirect
