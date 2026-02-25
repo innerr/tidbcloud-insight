@@ -166,7 +166,7 @@ func RegisterCmds(cmds *model.CmdTree) {
 	configDefault.AddArg("clusters-list-file", "", "list-file", "clf").
 		AddArg2Env(EnvKeyClustersListFile, "clusters-list-file")
 
-	configDefault.AddArg("cache-max-size-mb", "100000", "max-size", "cms").
+	configDefault.AddArg("cache-max-size-mb", "0", "max-size", "cms").
 		AddArg2Env(impl.EnvKeyCacheMaxSizeMB, "cache-max-size-mb")
 
 	dig := cmds.AddSub("dig", "d").RegEmptyCmd("dig operations").Owner()

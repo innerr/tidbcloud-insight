@@ -103,8 +103,8 @@ func TestConfigDefaultSetsDefaultValues(t *testing.T) {
 	if env.GetRaw(EnvKeyTimeDuration) != "21d" {
 		t.Errorf("Expected time-duration to be '21d', got '%s'", env.GetRaw(EnvKeyTimeDuration))
 	}
-	if env.GetRaw(impl.EnvKeyCacheMaxSizeMB) != "100000" {
-		t.Errorf("Expected cache-max-size-mb to be '100000', got '%s'", env.GetRaw(impl.EnvKeyCacheMaxSizeMB))
+	if env.GetRaw(impl.EnvKeyCacheMaxSizeMB) != "0" {
+		t.Errorf("Expected cache-max-size-mb to be '0', got '%s'", env.GetRaw(impl.EnvKeyCacheMaxSizeMB))
 	}
 }
 

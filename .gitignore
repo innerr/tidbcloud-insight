@@ -37,6 +37,7 @@ go.work.sum
 /cache
 /docs/drafts
 /bin
+/bin.prod
 /meta/dedicated/clusters.json
 /meta/dedicated/clusters.txt
 /meta/premium/clusters.json
