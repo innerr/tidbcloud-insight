@@ -3,6 +3,7 @@ package impl
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -232,6 +233,11 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 	}
 
 	if len(result.Errors) > 0 && result.FetchedMetrics == 0 {
+		for _, e := range result.Errors {
+			if strings.Contains(e.Error(), "cache limit exceeded") {
+				return result, e
+			}
+		}
 		return result, fmt.Errorf("all fetch tasks failed")
 	}
 
@@ -540,6 +546,11 @@ func (f *MetricsFetcher) FetchWithProgress(ctx context.Context, clusterID, dsURL
 	}
 
 	if len(result.Errors) > 0 && result.FetchedMetrics == 0 {
+		for _, e := range result.Errors {
+			if strings.Contains(e.Error(), "cache limit exceeded") {
+				return result, e
+			}
+		}
 		return result, fmt.Errorf("all fetch tasks failed")
 	}
 
