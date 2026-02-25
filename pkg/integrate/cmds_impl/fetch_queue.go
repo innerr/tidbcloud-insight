@@ -11,19 +11,13 @@ import (
 )
 
 const minChunkSize = 300        // 5 minutes
+const initialChunkSize = 1800   // 30 minutes, for first fetch
 const maxMergeChunkSize = 86400 // 1 day
 const maxMergeMultiplier = 8    // max 8x growth per merge
+const maxMergeMultiplierAfterSplit = 2
 
-type SplitRecord struct {
-	ClusterID  string
-	Metric     string
-	BeforeSize int
-}
-
-type MergeRecord struct {
-	ClusterID string
-	Metric    string
-	AfterSize int
+type AdjustRecord struct {
+	LastAdjust string // "merge" or "split"
 }
 
 type TaskResult struct {
@@ -37,6 +31,8 @@ type TaskResult struct {
 	ActualBytes  int64
 	TargetBytes  int64
 	ChunkSize    int
+	EmptyData    bool
+	IsFirstFetch bool
 }
 
 type TaskHandler func(ctx context.Context, task *FetchTask) *TaskResult
@@ -53,10 +49,10 @@ type FetchQueue struct {
 
 	results []*TaskResult
 
-	splitHistory     []SplitRecord
-	mergeHistory     []MergeRecord
-	currentChunkSize map[string]int
-	abortedClusters  map[string]bool
+	chunkSizeCache  map[string]int
+	adjustHistory   map[string]*AdjustRecord
+	firstFetchDone  map[string]bool
+	abortedClusters map[string]bool
 
 	stopped bool
 	workers int
@@ -66,19 +62,30 @@ type FetchQueue struct {
 	wg sync.WaitGroup
 }
 
-func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler) *FetchQueue {
+func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler,
+	chunkSizeCache map[string]int, adjustHistory map[string]*AdjustRecord, firstFetchDone map[string]bool) *FetchQueue {
 	ctx, cancel := context.WithCancel(parentCtx)
 
+	if chunkSizeCache == nil {
+		chunkSizeCache = make(map[string]int)
+	}
+	if adjustHistory == nil {
+		adjustHistory = make(map[string]*AdjustRecord)
+	}
+	if firstFetchDone == nil {
+		firstFetchDone = make(map[string]bool)
+	}
+
 	q := &FetchQueue{
-		ctx:              ctx,
-		cancel:           cancel,
-		pending:          make(map[string][]*FetchTask),
-		splitHistory:     make([]SplitRecord, 0),
-		mergeHistory:     make([]MergeRecord, 0),
-		currentChunkSize: make(map[string]int),
-		abortedClusters:  make(map[string]bool),
-		workers:          workers,
-		handler:          handler,
+		ctx:             ctx,
+		cancel:          cancel,
+		pending:         make(map[string][]*FetchTask),
+		chunkSizeCache:  chunkSizeCache,
+		adjustHistory:   adjustHistory,
+		firstFetchDone:  firstFetchDone,
+		abortedClusters: make(map[string]bool),
+		workers:         workers,
+		handler:         handler,
 	}
 	q.cond = sync.NewCond(&q.mu)
 
@@ -99,8 +106,13 @@ func (q *FetchQueue) Submit(task *FetchTask) bool {
 	}
 
 	key := q.taskKey(task)
-	if _, exists := q.currentChunkSize[key]; !exists {
-		q.currentChunkSize[key] = task.ChunkSize
+	if !q.firstFetchDone[key] {
+		task.ChunkSize = initialChunkSize
+	} else if cachedSize, exists := q.chunkSizeCache[key]; exists {
+		task.ChunkSize = cachedSize
+	}
+	if _, exists := q.chunkSizeCache[key]; !exists {
+		q.chunkSizeCache[key] = task.ChunkSize
 	}
 
 	q.pending[key] = append(q.pending[key], task)
@@ -120,8 +132,13 @@ func (q *FetchQueue) SubmitBatch(tasks []*FetchTask) {
 
 	for _, task := range tasks {
 		key := q.taskKey(task)
-		if _, exists := q.currentChunkSize[key]; !exists {
-			q.currentChunkSize[key] = task.ChunkSize
+		if !q.firstFetchDone[key] {
+			task.ChunkSize = initialChunkSize
+		} else if cachedSize, exists := q.chunkSizeCache[key]; exists {
+			task.ChunkSize = cachedSize
+		}
+		if _, exists := q.chunkSizeCache[key]; !exists {
+			q.chunkSizeCache[key] = task.ChunkSize
 		}
 		q.pending[key] = append(q.pending[key], task)
 		q.allPending = append(q.allPending, task)
@@ -173,7 +190,7 @@ func (q *FetchQueue) takeTask() *FetchTask {
 				}
 
 				key := q.taskKey(task)
-				if chunkSize, ok := q.currentChunkSize[key]; ok {
+				if chunkSize, ok := q.chunkSizeCache[key]; ok {
 					task.ChunkSize = chunkSize
 				}
 
@@ -215,6 +232,20 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 		return
 	}
 
+	if result.EmptyData && result.IsFirstFetch {
+		logger.Warnf("First fetch for %s returned empty, skipping remaining tasks", key)
+		q.firstFetchDone[key] = true
+		delete(q.pending, key)
+		q.rebuildAllPendingLocked()
+		q.results = append(q.results, result)
+		q.cond.Broadcast()
+		return
+	}
+
+	if result.Success && result.IsFirstFetch {
+		q.firstFetchDone[key] = true
+	}
+
 	if result.NeedSplit {
 		q.handleSplitLocked(result)
 		q.cond.Broadcast()
@@ -253,14 +284,6 @@ func (q *FetchQueue) handleSplitLocked(result *TaskResult) {
 	task := result.Task
 	key := q.taskKey(task)
 
-	for _, r := range q.splitHistory {
-		if r.ClusterID == task.ClusterID && r.Metric == task.Metric && r.BeforeSize == result.FailedSize {
-			logger.Debugf("Split already done for %s with size %d, requeueing task", key, result.FailedSize)
-			q.requeueTaskLocked(task)
-			return
-		}
-	}
-
 	newChunkSize := result.FailedSize / 2
 	if newChunkSize < minChunkSize {
 		logger.Warnf("Cluster %s metric %s: chunk size %d too small after split (< %d), aborting cluster",
@@ -272,12 +295,8 @@ func (q *FetchQueue) handleSplitLocked(result *TaskResult) {
 
 	logger.Warnf("Splitting tasks for %s: chunk size %d -> %d", key, result.FailedSize, newChunkSize)
 
-	q.splitHistory = append(q.splitHistory, SplitRecord{
-		ClusterID:  task.ClusterID,
-		Metric:     task.Metric,
-		BeforeSize: result.FailedSize,
-	})
-	q.currentChunkSize[key] = newChunkSize
+	q.adjustHistory[key] = &AdjustRecord{LastAdjust: "split"}
+	q.chunkSizeCache[key] = newChunkSize
 
 	q.splitPendingTasksLocked(key, newChunkSize)
 
@@ -288,20 +307,32 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 	task := result.Task
 	key := q.taskKey(task)
 
-	for _, r := range q.mergeHistory {
-		if r.ClusterID == task.ClusterID && r.Metric == task.Metric {
-			return
-		}
-	}
-
-	if result.ActualBytes <= 0 || result.ChunkSize <= 0 {
+	if result.ActualBytes <= 0 || result.ChunkSize <= 0 || result.TargetBytes <= 0 {
 		return
 	}
 
-	targetHalf := result.TargetBytes / 2
-	estimatedChunkSize := int(float64(result.ChunkSize) * float64(targetHalf) / float64(result.ActualBytes))
+	ratio := float64(result.ActualBytes) / float64(result.TargetBytes)
 
-	maxGrowth := result.ChunkSize * maxMergeMultiplier
+	record := q.adjustHistory[key]
+	var targetRatio float64
+	var maxGrowth int
+
+	if record != nil && record.LastAdjust == "split" {
+		if ratio >= 0.25 {
+			return
+		}
+		targetRatio = 0.5
+		maxGrowth = result.ChunkSize * maxMergeMultiplierAfterSplit
+	} else {
+		if ratio >= 0.4 {
+			return
+		}
+		targetRatio = 0.7
+		maxGrowth = result.ChunkSize * maxMergeMultiplier
+	}
+
+	estimatedChunkSize := int(float64(result.ChunkSize) * float64(result.TargetBytes) * targetRatio / float64(result.ActualBytes))
+
 	if estimatedChunkSize > maxGrowth {
 		estimatedChunkSize = maxGrowth
 	}
@@ -314,15 +345,11 @@ func (q *FetchQueue) handleMergeLocked(result *TaskResult) {
 		return
 	}
 
-	logger.Warnf("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target half %d bytes)",
-		key, result.ChunkSize, estimatedChunkSize, result.ActualBytes, targetHalf)
+	logger.Warnf("Merging tasks for %s: chunk size %d -> %d (actual %d bytes, target %d bytes, ratio %.2f)",
+		key, result.ChunkSize, estimatedChunkSize, result.ActualBytes, result.TargetBytes, ratio)
 
-	q.mergeHistory = append(q.mergeHistory, MergeRecord{
-		ClusterID: task.ClusterID,
-		Metric:    task.Metric,
-		AfterSize: estimatedChunkSize,
-	})
-	q.currentChunkSize[key] = estimatedChunkSize
+	q.adjustHistory[key] = &AdjustRecord{LastAdjust: "merge"}
+	q.chunkSizeCache[key] = estimatedChunkSize
 	q.mergePendingTasksLocked(key, estimatedChunkSize)
 }
 
@@ -438,7 +465,7 @@ func (q *FetchQueue) rebuildAllPendingLocked() {
 
 func (q *FetchQueue) requeueTaskLocked(task *FetchTask) {
 	key := q.taskKey(task)
-	chunkSize := q.currentChunkSize[key]
+	chunkSize := q.chunkSizeCache[key]
 	splitTasks := q.splitTaskLocked(task, chunkSize)
 	q.pending[key] = append(q.pending[key], splitTasks...)
 	q.rebuildAllPendingLocked()
