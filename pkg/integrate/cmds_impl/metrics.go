@@ -318,7 +318,7 @@ func MetricsFetchWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *
 func MetricsFetchRandomWithConfig(cacheDir, metaDir string, cp ClientParams, authMgr *AuthManager,
 	startTS, endTS int64, metricFilter string, config MetricsFetcherConfig) (string, int, error) {
 
-	inactive := loadInactiveClusters(cacheDir)
+	inactive := loadInactiveClusters(metaDir)
 
 	var allClusters []clusterInfo
 	for _, bizType := range []string{"dedicated", "premium"} {
@@ -368,9 +368,9 @@ type clusterInfo struct {
 	region    string
 }
 
-func loadInactiveClusters(cacheDir string) map[string]bool {
+func loadInactiveClusters(metaDir string) map[string]bool {
 	result := make(map[string]bool)
-	path := filepath.Join(cacheDir, "inactive_clusters.txt")
+	path := filepath.Join(metaDir, "inactive_clusters.txt")
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -386,6 +386,29 @@ func loadInactiveClusters(cacheDir string) map[string]bool {
 		}
 	}
 	return result
+}
+
+func saveInactiveCluster(metaDir, clusterID string) error {
+	path := filepath.Join(metaDir, "inactive_clusters.txt")
+
+	inactive := loadInactiveClusters(metaDir)
+	if inactive[clusterID] {
+		return nil
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	_, err = f.WriteString(clusterID + "\n")
+	return err
+}
+
+func isInactiveCluster(metaDir, clusterID string) bool {
+	inactive := loadInactiveClusters(metaDir)
+	return inactive[clusterID]
 }
 
 func loadClustersFromList(metaDir, bizType string) ([]clusterInfo, error) {
@@ -454,7 +477,7 @@ func MetricsFetchAllWithConfig(cacheDir, metaDir string, cp ClientParams, authMg
 		logger.Infof("cleaned %d temp files", cleaned)
 	}
 
-	inactive := loadInactiveClusters(cacheDir)
+	inactive := loadInactiveClusters(metaDir)
 	if len(inactive) > 0 {
 		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
 	}

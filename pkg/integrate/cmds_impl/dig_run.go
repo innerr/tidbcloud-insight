@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -114,6 +115,10 @@ func DigProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Durat
 	authMgr *AuthManager, config MetricsFetcherConfig,
 	clusterID string, startTS, endTS int64, jsonOutput bool) error {
 
+	if isInactiveCluster(metaDir, clusterID) {
+		return fmt.Errorf("cluster %s is inactive (no QPS data), see meta/inactive_clusters.txt", clusterID)
+	}
+
 	fmt.Printf("Profiling cluster %s\n", clusterID)
 	fmt.Printf("Time range: %s ~ %s\n",
 		time.Unix(startTS, 0).Format("2006-01-02 15:04:05"),
@@ -136,6 +141,10 @@ func DigProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Durat
 	}
 
 	if len(data.qpsData) == 0 {
+		saveErr := saveInactiveCluster(metaDir, clusterID)
+		if saveErr != nil {
+			fmt.Printf("Warning: failed to save inactive cluster: %v\n", saveErr)
+		}
 		return fmt.Errorf("no QPS data available for analysis")
 	}
 
@@ -169,6 +178,10 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	authMgr *AuthManager, config MetricsFetcherConfig,
 	clusterID string, startTS, endTS int64, jsonOutput bool) error {
 
+	if isInactiveCluster(metaDir, clusterID) {
+		return fmt.Errorf("cluster %s is inactive (no QPS data), see meta/inactive_clusters.txt", clusterID)
+	}
+
 	fmt.Printf("Detecting anomalies for cluster %s\n", clusterID)
 	fmt.Printf("Time range: %s ~ %s\n",
 		time.Unix(startTS, 0).Format("2006-01-02 15:04:05"),
@@ -191,6 +204,10 @@ func DigAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.Dura
 	}
 
 	if len(data.qpsData) == 0 {
+		saveErr := saveInactiveCluster(metaDir, clusterID)
+		if saveErr != nil {
+			fmt.Printf("Warning: failed to save inactive cluster: %v\n", saveErr)
+		}
 		return fmt.Errorf("no QPS data available for analysis")
 	}
 	if len(data.qpsData) < 80 {
@@ -2404,7 +2421,7 @@ func DigRandomProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time
 	authMgr *AuthManager, config MetricsFetcherConfig,
 	startTS, endTS int64, jsonOutput bool) error {
 
-	clusterID, err := selectRandomCluster(cacheDir)
+	clusterID, err := selectRandomCluster(cacheDir, metaDir)
 	if err != nil {
 		return err
 	}
@@ -2419,7 +2436,7 @@ func DigRandomAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff tim
 	authMgr *AuthManager, config MetricsFetcherConfig,
 	startTS, endTS int64, jsonOutput bool) error {
 
-	clusterID, err := selectRandomCluster(cacheDir)
+	clusterID, err := selectRandomCluster(cacheDir, metaDir)
 	if err != nil {
 		return err
 	}
@@ -2430,7 +2447,12 @@ func DigRandomAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff tim
 		clusterID, startTS, endTS, jsonOutput)
 }
 
-func selectRandomCluster(cacheDir string) (string, error) {
+func selectRandomCluster(cacheDir, metaDir string) (string, error) {
+	inactive := loadInactiveClusters(metaDir)
+	if len(inactive) > 0 {
+		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
+	}
+
 	metricsDir := filepath.Join(cacheDir, "metrics")
 
 	entries, err := os.ReadDir(metricsDir)
@@ -2444,6 +2466,9 @@ func selectRandomCluster(cacheDir string) (string, error) {
 	var cachedClusters []string
 	for _, entry := range entries {
 		if entry.IsDir() {
+			if inactive[entry.Name()] {
+				continue
+			}
 			clusterDir := filepath.Join(metricsDir, entry.Name())
 			metricEntries, err := os.ReadDir(clusterDir)
 			if err != nil {
@@ -2473,10 +2498,15 @@ func DigWalkProfile(cacheDir, metaDir string, cp ClientParams, maxBackoff time.D
 		return err
 	}
 
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(clusters), func(i, j int) {
+		clusters[i], clusters[j] = clusters[j], clusters[i]
+	})
+
 	fmt.Printf("Walking through %d clusters (profile)\n\n", len(clusters))
 
 	for i, c := range clusters {
-		fmt.Printf("[%d/%d] Processing cluster %s (%s)\n", i+1, len(clusters), c.clusterID, c.bizType)
+		fmt.Printf("[%d/%d] Processing cluster %s\n", i+1, len(clusters), c.clusterID)
 
 		err := DigProfile(cacheDir, metaDir, cp, maxBackoff, authMgr, config,
 			c.clusterID, startTS, endTS, false)
@@ -2499,10 +2529,15 @@ func DigWalkAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.
 		return err
 	}
 
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(clusters), func(i, j int) {
+		clusters[i], clusters[j] = clusters[j], clusters[i]
+	})
+
 	fmt.Printf("Walking through %d clusters (abnormal)\n\n", len(clusters))
 
 	for i, c := range clusters {
-		fmt.Printf("[%d/%d] Processing cluster %s (%s)\n", i+1, len(clusters), c.clusterID, c.bizType)
+		fmt.Printf("[%d/%d] Processing cluster %s\n", i+1, len(clusters), c.clusterID)
 
 		err := DigAbnormal(cacheDir, metaDir, cp, maxBackoff, authMgr, config,
 			c.clusterID, startTS, endTS, false)
@@ -2517,22 +2552,35 @@ func DigWalkAbnormal(cacheDir, metaDir string, cp ClientParams, maxBackoff time.
 }
 
 func getActiveClusters(cacheDir, metaDir string) ([]clusterInfo, error) {
-	inactive := loadInactiveClusters(cacheDir)
+	inactive := loadInactiveClusters(metaDir)
 	if len(inactive) > 0 {
 		fmt.Printf("Excluding %d inactive clusters\n", len(inactive))
 	}
 
+	metricsDir := filepath.Join(cacheDir, "metrics")
+	entries, err := os.ReadDir(metricsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no cached metrics found, please fetch metrics first")
+		}
+		return nil, fmt.Errorf("failed to read metrics cache: %w", err)
+	}
+
 	var allClusters []clusterInfo
-	for _, bizType := range []string{"dedicated", "premium"} {
-		clusters, err := loadClustersFromList(metaDir, bizType)
-		if err != nil {
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		for _, c := range clusters {
-			if !inactive[c.clusterID] {
-				allClusters = append(allClusters, c)
-			}
+		clusterID := entry.Name()
+		if inactive[clusterID] {
+			continue
 		}
+		clusterDir := filepath.Join(metricsDir, clusterID)
+		metricEntries, err := os.ReadDir(clusterDir)
+		if err != nil || len(metricEntries) == 0 {
+			continue
+		}
+		allClusters = append(allClusters, clusterInfo{clusterID: clusterID})
 	}
 
 	if len(allClusters) == 0 {
