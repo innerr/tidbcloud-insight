@@ -94,10 +94,14 @@ func (s *AdaptiveChunkSizer) TargetBytesPerChunk() int64 {
 }
 
 type MetricsFetcher struct {
-	client     *client.Client
-	storage    *prometheus_storage.PrometheusStorage
-	config     MetricsFetcherConfig
-	chunkSizer *AdaptiveChunkSizer
+	client         *client.Client
+	storage        *prometheus_storage.PrometheusStorage
+	config         MetricsFetcherConfig
+	chunkSizer     *AdaptiveChunkSizer
+	chunkSizeCache map[string]int
+	adjustHistory  map[string]*AdjustRecord
+	firstFetchDone map[string]bool
+	cacheMu        sync.RWMutex
 }
 
 func NewMetricsFetcherConfigFromEnv(env *model.Env) MetricsFetcherConfig {
@@ -122,22 +126,26 @@ func NewMetricsFetcher(c *client.Client, storage *prometheus_storage.PrometheusS
 	}
 
 	return &MetricsFetcher{
-		client:     c,
-		storage:    storage,
-		config:     config,
-		chunkSizer: NewAdaptiveChunkSizer(targetBytes),
+		client:         c,
+		storage:        storage,
+		config:         config,
+		chunkSizer:     NewAdaptiveChunkSizer(targetBytes),
+		chunkSizeCache: make(map[string]int),
+		adjustHistory:  make(map[string]*AdjustRecord),
+		firstFetchDone: make(map[string]bool),
 	}
 }
 
 type FetchTask struct {
-	ID        string
-	ClusterID string
-	Metric    string
-	GapStart  int64
-	GapEnd    int64
-	DSURL     string
-	Step      int
-	ChunkSize int
+	ID           string
+	ClusterID    string
+	Metric       string
+	GapStart     int64
+	GapEnd       int64
+	DSURL        string
+	Step         int
+	ChunkSize    int
+	IsFirstFetch bool
 }
 
 func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, metrics []string, startTS, endTS int64, step int) (*FetchResult, error) {
@@ -145,6 +153,7 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 
 	var tasks []*FetchTask
 
+	f.cacheMu.RLock()
 	for _, metric := range metrics {
 		existingRanges, err := f.storage.GetExistingTimeRanges(clusterID, metric)
 		if err != nil {
@@ -158,21 +167,32 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 			continue
 		}
 
-		for _, gap := range gaps {
-			gapDuration := gap[1] - gap[0]
-			chunkDuration := f.chunkSizer.EstimateChunkDuration(gapDuration)
+		key := clusterID + ":" + metric
+		isFirst := !f.firstFetchDone[key]
+		chunkDuration := initialChunkSize
+		if !isFirst {
+			if cachedSize, exists := f.chunkSizeCache[key]; exists {
+				chunkDuration = cachedSize
+			} else {
+				gapDuration := gaps[0][1] - gaps[0][0]
+				chunkDuration = f.chunkSizer.EstimateChunkDuration(gapDuration)
+			}
+		}
 
+		for _, gap := range gaps {
 			tasks = append(tasks, &FetchTask{
-				Metric:    metric,
-				GapStart:  gap[0],
-				GapEnd:    gap[1],
-				DSURL:     dsURL,
-				ClusterID: clusterID,
-				Step:      step,
-				ChunkSize: chunkDuration,
+				Metric:       metric,
+				GapStart:     gap[0],
+				GapEnd:       gap[1],
+				DSURL:        dsURL,
+				ClusterID:    clusterID,
+				Step:         step,
+				ChunkSize:    chunkDuration,
+				IsFirstFetch: isFirst,
 			})
 		}
 	}
+	f.cacheMu.RUnlock()
 
 	if len(tasks) == 0 {
 		return result, nil
@@ -182,7 +202,10 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 		return f.executeTask(ctx, task)
 	}
 
-	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler)
+	f.cacheMu.Lock()
+	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler, f.chunkSizeCache, f.adjustHistory, f.firstFetchDone)
+	f.cacheMu.Unlock()
+
 	queue.SubmitBatch(tasks)
 
 	results := queue.Wait()
@@ -277,20 +300,31 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 
 	logger.LogMetricsArrival(task.ClusterID, task.Metric, int(task.GapStart), int(task.GapEnd), 200, actualBytes, true)
 
+	if actualBytes == 0 && task.IsFirstFetch {
+		return &TaskResult{
+			Task:         task,
+			Success:      true,
+			EmptyData:    true,
+			IsFirstFetch: true,
+		}
+	}
+
 	if actualBytes > 0 && actualBytes < targetBytes/2 {
 		return &TaskResult{
-			Task:        task,
-			Success:     true,
-			NeedMerge:   true,
-			ActualBytes: actualBytes,
-			TargetBytes: targetBytes,
-			ChunkSize:   task.ChunkSize,
+			Task:         task,
+			Success:      true,
+			NeedMerge:    true,
+			ActualBytes:  actualBytes,
+			TargetBytes:  targetBytes,
+			ChunkSize:    task.ChunkSize,
+			IsFirstFetch: task.IsFirstFetch,
 		}
 	}
 
 	return &TaskResult{
-		Task:    task,
-		Success: true,
+		Task:         task,
+		Success:      true,
+		IsFirstFetch: task.IsFirstFetch,
 	}
 }
 
