@@ -327,15 +327,6 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 
 	actualBytes := writer.BytesWritten()
 
-	if actualBytes == 0 && task.IsFirstFetch {
-		return &TaskResult{
-			Task:         task,
-			Success:      true,
-			EmptyData:    true,
-			IsFirstFetch: true,
-		}
-	}
-
 	if actualBytes > 0 && actualBytes < targetBytes/2 {
 		return &TaskResult{
 			Task:         task,

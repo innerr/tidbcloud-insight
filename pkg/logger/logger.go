@@ -203,7 +203,7 @@ func LogHTTP(metric string, statusCode int, logAll bool) {
 }
 
 func LogMetricsArrival(clusterID, metric string, start, end, statusCode int, bytesWritten int64, logAll bool) {
-	if !logAll && statusCode == 200 {
+	if !logAll && statusCode == 200 && bytesWritten > 0 {
 		return
 	}
 	durationStr := ""
@@ -212,6 +212,9 @@ func LogMetricsArrival(clusterID, metric string, start, end, statusCode int, byt
 	}
 
 	bytesStr := formatBytes(bytesWritten)
+	if bytesWritten == 0 {
+		bytesStr = "empty"
+	}
 
 	var msg string
 	if clusterID != "" && durationStr != "" {

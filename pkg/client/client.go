@@ -535,7 +535,7 @@ func (c *Client) QueryMetric(ctx context.Context, clusterID, dsURL, metric strin
 		params.Set("query", metric)
 	}
 
-	fetchTimeout := 2 * time.Minute
+	fetchTimeout := 5 * time.Minute
 
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
@@ -670,8 +670,6 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, ds
 			adjustedEnd = end
 		}
 
-		logger.Debugf("fetching %s [%d-%d] chunk=%d", metric, currentStart, adjustedEnd, currentChunk)
-
 		if writer != nil {
 			if err := writer.CheckCacheLimit(); err != nil {
 				return nil, err
@@ -685,6 +683,16 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, ds
 					TooManySamples: true,
 					FailedSize:     currentChunk,
 				}, err
+			}
+			if isNoDataError(err) {
+				logger.LogMetricsArrival(clusterID, metric, currentStart, adjustedEnd, 200, 0, true)
+				if currentChunk >= maxChunkSize {
+					currentChunk *= 2
+				} else {
+					currentChunk = maxChunkSize
+				}
+				currentStart = adjustedEnd
+				continue
 			}
 			return nil, err
 		}
@@ -1118,6 +1126,13 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func isNoDataError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return contains(err.Error(), "no data found")
 }
 
 func joinStrings(s []string, sep string) string {
