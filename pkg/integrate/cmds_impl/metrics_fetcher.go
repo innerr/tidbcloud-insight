@@ -16,6 +16,7 @@ type MetricsFetcherConfig struct {
 	TargetChunkSizeMB int
 	MaxConcurrency    int
 	Step              int
+	CacheMaxSizeMB    int
 }
 
 type FetchResult struct {
@@ -93,14 +94,15 @@ func (s *AdaptiveChunkSizer) TargetBytesPerChunk() int64 {
 }
 
 type MetricsFetcher struct {
-	client         *client.Client
-	storage        *prometheus_storage.PrometheusStorage
-	config         MetricsFetcherConfig
-	chunkSizer     *AdaptiveChunkSizer
-	chunkSizeCache map[string]int
-	adjustHistory  map[string]*AdjustRecord
-	firstFetchDone map[string]bool
-	cacheMu        sync.RWMutex
+	client           *client.Client
+	storage          *prometheus_storage.PrometheusStorage
+	config           MetricsFetcherConfig
+	chunkSizer       *AdaptiveChunkSizer
+	chunkSizeCache   map[string]int
+	adjustHistory    map[string]*AdjustRecord
+	firstFetchDone   map[string]bool
+	cacheMu          sync.RWMutex
+	cacheSizeTracker *prometheus_storage.CacheSizeTracker
 }
 
 func NewMetricsFetcherConfigFromEnv(env *model.Env) MetricsFetcherConfig {
@@ -115,6 +117,7 @@ func NewMetricsFetcherConfigFromEnv(env *model.Env) MetricsFetcherConfig {
 		TargetChunkSizeMB: env.GetInt(EnvKeyTargetChunkSizeMB),
 		MaxConcurrency:    env.GetInt(EnvKeyRateLimitDesiredConcurrency),
 		Step:              step,
+		CacheMaxSizeMB:    env.GetInt(EnvKeyCacheMaxSizeMB),
 	}
 }
 
@@ -125,13 +128,14 @@ func NewMetricsFetcher(c *client.Client, storage *prometheus_storage.PrometheusS
 	}
 
 	return &MetricsFetcher{
-		client:         c,
-		storage:        storage,
-		config:         config,
-		chunkSizer:     NewAdaptiveChunkSizer(targetBytes),
-		chunkSizeCache: make(map[string]int),
-		adjustHistory:  make(map[string]*AdjustRecord),
-		firstFetchDone: make(map[string]bool),
+		client:           c,
+		storage:          storage,
+		config:           config,
+		chunkSizer:       NewAdaptiveChunkSizer(targetBytes),
+		chunkSizeCache:   make(map[string]int),
+		adjustHistory:    make(map[string]*AdjustRecord),
+		firstFetchDone:   make(map[string]bool),
+		cacheSizeTracker: prometheus_storage.GetCacheSizeTracker(storage.GetBaseDir()),
 	}
 }
 
@@ -149,6 +153,13 @@ type FetchTask struct {
 
 func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, metrics []string, startTS, endTS int64, step int) (*FetchResult, error) {
 	result := &FetchResult{}
+
+	if f.config.CacheMaxSizeMB > 0 {
+		currentSize, err := f.cacheSizeTracker.CheckLimit(f.config.CacheMaxSizeMB)
+		if err != nil {
+			return nil, fmt.Errorf("cache size check failed: %w (current: %s)", err, f.cacheSizeTracker.FormatSize(currentSize))
+		}
+	}
 
 	var tasks []*FetchTask
 
@@ -298,6 +309,10 @@ func (f *MetricsFetcher) executeTask(ctx context.Context, task *FetchTask) *Task
 	}
 
 	actualBytes := writer.BytesWritten()
+
+	if actualBytes > 0 {
+		f.cacheSizeTracker.AddBytes(actualBytes)
+	}
 
 	if actualBytes == 0 && task.IsFirstFetch {
 		return &TaskResult{

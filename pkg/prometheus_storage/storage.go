@@ -31,6 +31,10 @@ func (s *PrometheusStorage) GetClusterDir(clusterID string) string {
 	return filepath.Join(s.baseDir, clusterID)
 }
 
+func (s *PrometheusStorage) GetBaseDir() string {
+	return s.baseDir
+}
+
 func (s *PrometheusStorage) ListMetrics(clusterID string) ([]string, error) {
 	clusterDir := s.GetClusterDir(clusterID)
 	entries, err := os.ReadDir(clusterDir)
