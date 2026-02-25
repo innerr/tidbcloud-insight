@@ -42,6 +42,7 @@ func Integrate(tc *ticat.TiCat) error {
 	defEnv.SetInt(impl.EnvKeyRateLimitDesiredConcurrency, 5)
 	defEnv.Set(EnvKeyRateLimitRecoveryInterval, "30s")
 	defEnv.Set(EnvKeyRateLimitMinRecovery, "10s")
+	defEnv.SetInt(impl.EnvKeyCacheMaxSizeMB, 0)
 
 	defEnv.Set(EnvKeyAuthTokenURL, "https://tidb-soc2.us.auth0.com/oauth/token")
 	defEnv.Set(EnvKeyAuthAudience, "https://tidb-soc2.us.auth0.com/api/v2/")
