@@ -684,6 +684,12 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, ds
 					FailedSize:     currentChunk,
 				}, err
 			}
+			if isNoDataError(err) {
+				logger.LogMetricsArrival(clusterID, metric, currentStart, adjustedEnd, 200, 0, true)
+				currentChunk = maxChunkSize
+				currentStart = adjustedEnd
+				continue
+			}
 			return nil, err
 		}
 
@@ -1116,6 +1122,13 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func isNoDataError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return contains(err.Error(), "no data found")
 }
 
 func joinStrings(s []string, sep string) string {
