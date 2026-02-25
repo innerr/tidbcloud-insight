@@ -197,7 +197,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step").
 		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
-		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).Owner()
+		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead).Owner()
 
 	metricsFetch.AddSub("random", "r").RegPowerCmd(MetricsFetchRandom,
 		"fetch metrics from a random cluster, writes cluster-id to env").
@@ -221,6 +222,7 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeWrite)
 
 	metricsFetch.AddSub("all", "a").RegPowerCmd(MetricsFetchAll,
@@ -241,7 +243,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step").
 		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
-		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead)
+		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead)
 
 	metricsCache := metrics.AddSub("cache", "ca").RegEmptyCmd("metrics cache operations").Owner()
 	metricsCache.AddSub("list", "l", "ls").RegPowerCmd(MetricsCacheListCmd,

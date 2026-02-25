@@ -13,6 +13,7 @@ const (
 	EnvKeyTargetChunkSizeMB           = EnvPrefix + "fetch.target-chunk-size-mb"
 	EnvKeyMetricsFetchStep            = EnvPrefix + "metrics-fetch-step"
 	EnvKeyRateLimitDesiredConcurrency = EnvPrefix + "rate-limit.desired-concurrency"
+	EnvKeyCacheMaxSizeMB              = EnvPrefix + "cache.max-size-mb"
 )
 
 type AuthManager = auth.Manager
