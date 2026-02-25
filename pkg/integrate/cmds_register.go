@@ -7,6 +7,10 @@ import (
 	impl "tidbcloud-insight/pkg/integrate/cmds_impl"
 )
 
+func noOpCmd(argv model.ArgVals, cc *model.Cli, env *model.Env, flow []model.ParsedCmd) error {
+	return nil
+}
+
 const (
 	EnvPrefix = "tidbcloud-insight."
 
@@ -45,6 +49,126 @@ const (
 )
 
 func RegisterCmds(cmds *model.CmdTree) {
+	configCmd := cmds.AddSub("config", "cfg").RegCmd(noOpCmd, "set config values", "")
+
+	configCmd.AddArg("cache-dir", "", "cache", "cd").
+		AddArg2Env(EnvKeyCacheDir, "cache-dir")
+	configCmd.AddArg("meta-dir", "", "meta", "md").
+		AddArg2Env(EnvKeyMetaDir, "meta-dir")
+	configCmd.AddArg("verbose", "", "v").
+		AddArg2Env(EnvKeyVerbose, "verbose")
+	configCmd.AddArg("log-all-http-codes", "", "http-codes").
+		AddArg2Env(EnvKeyLogAllHTTPCodes, "log-all-http-codes")
+
+	configCmd.AddArg("auth-client-id", "", "client-id", "acid").
+		AddArg2Env(EnvKeyAuthClientID, "auth-client-id")
+	configCmd.AddArg("auth-client-secret", "", "client-secret", "secret", "acs").
+		AddArg2Env(EnvKeyAuthClientSecret, "auth-client-secret")
+	configCmd.AddArg("auth-token-url", "", "token-url", "atu").
+		AddArg2Env(EnvKeyAuthTokenURL, "auth-token-url")
+	configCmd.AddArg("auth-audience", "", "audience", "aud").
+		AddArg2Env(EnvKeyAuthAudience, "auth-audience")
+
+	configCmd.AddArg("rate-limit-max-backoff", "", "max-backoff", "rlmb").
+		AddArg2Env(EnvKeyRateLimitMaxBackoff, "rate-limit-max-backoff")
+	configCmd.AddArg("rate-limit-recovery-interval", "", "recovery-interval", "rlri").
+		AddArg2Env(EnvKeyRateLimitRecoveryInterval, "rate-limit-recovery-interval")
+	configCmd.AddArg("rate-limit-min-recovery", "", "min-recovery", "rlmr").
+		AddArg2Env(EnvKeyRateLimitMinRecovery, "rate-limit-min-recovery")
+	configCmd.AddArg("rate-limit-desired-concurrency", "", "concurrency", "rldc").
+		AddArg2Env(impl.EnvKeyRateLimitDesiredConcurrency, "rate-limit-desired-concurrency")
+
+	configCmd.AddArg("fetch-timeout", "", "timeout", "ft").
+		AddArg2Env(EnvKeyFetchTimeout, "fetch-timeout")
+	configCmd.AddArg("idle-timeout", "", "idle", "it").
+		AddArg2Env(EnvKeyIdleTimeout, "idle-timeout")
+	configCmd.AddArg("fetch-target-chunk-size-mb", "", "chunk-size", "ftcs").
+		AddArg2Env(impl.EnvKeyTargetChunkSizeMB, "fetch-target-chunk-size-mb")
+
+	configCmd.AddArg("time-start", "", "start", "ts").
+		AddArg2Env(EnvKeyTimeStart, "time-start")
+	configCmd.AddArg("time-end", "", "end", "te").
+		AddArg2Env(EnvKeyTimeEnd, "time-end")
+	configCmd.AddArg("time-duration-ago-as-end", "", "ago-as-end", "aae").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "time-duration-ago-as-end")
+	configCmd.AddArg("time-duration", "", "duration", "td").
+		AddArg2Env(EnvKeyTimeDuration, "time-duration")
+
+	configCmd.AddArg("cluster-id", "", "cluster", "id", "cid").
+		AddArg2Env(EnvKeyClusterID, "cluster-id")
+	configCmd.AddArg("metrics", "", "m").
+		AddArg2Env(EnvKeyMetrics, "metrics")
+	configCmd.AddArg("metrics-fetch-step", "", "step", "mfs").
+		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step")
+
+	configCmd.AddArg("clusters-fetch-timeout", "", "cft").
+		AddArg2Env(EnvKeyClustersFetchTimeout, "clusters-fetch-timeout")
+	configCmd.AddArg("clusters-page-size", "", "page-size", "cps").
+		AddArg2Env(EnvKeyClustersPageSize, "clusters-page-size")
+	configCmd.AddArg("clusters-list-file", "", "list-file", "clf").
+		AddArg2Env(EnvKeyClustersListFile, "clusters-list-file")
+
+	configCmd.AddArg("cache-max-size-mb", "", "max-size", "cms").
+		AddArg2Env(impl.EnvKeyCacheMaxSizeMB, "cache-max-size-mb").Owner()
+
+	configDefault := configCmd.AddSub("default", "def").RegCmd(noOpCmd, "set config to default values", "")
+
+	configDefault.AddArg("cache-dir", "./cache", "cache", "cd").
+		AddArg2Env(EnvKeyCacheDir, "cache-dir")
+	configDefault.AddArg("meta-dir", "./meta", "meta", "md").
+		AddArg2Env(EnvKeyMetaDir, "meta-dir")
+	configDefault.AddArg("verbose", "true", "v").
+		AddArg2Env(EnvKeyVerbose, "verbose")
+	configDefault.AddArg("log-all-http-codes", "", "http-codes").
+		AddArg2Env(EnvKeyLogAllHTTPCodes, "log-all-http-codes")
+
+	configDefault.AddArg("auth-token-url", "https://tidb-soc2.us.auth0.com/oauth/token", "token-url", "atu").
+		AddArg2Env(EnvKeyAuthTokenURL, "auth-token-url")
+	configDefault.AddArg("auth-audience", "https://tidb-soc2.us.auth0.com/api/v2/", "audience", "aud").
+		AddArg2Env(EnvKeyAuthAudience, "auth-audience")
+
+	configDefault.AddArg("rate-limit-max-backoff", "5m", "max-backoff", "rlmb").
+		AddArg2Env(EnvKeyRateLimitMaxBackoff, "rate-limit-max-backoff")
+	configDefault.AddArg("rate-limit-recovery-interval", "30s", "recovery-interval", "rlri").
+		AddArg2Env(EnvKeyRateLimitRecoveryInterval, "rate-limit-recovery-interval")
+	configDefault.AddArg("rate-limit-min-recovery", "10s", "min-recovery", "rlmr").
+		AddArg2Env(EnvKeyRateLimitMinRecovery, "rate-limit-min-recovery")
+	configDefault.AddArg("rate-limit-desired-concurrency", "5", "concurrency", "rldc").
+		AddArg2Env(impl.EnvKeyRateLimitDesiredConcurrency, "rate-limit-desired-concurrency")
+
+	configDefault.AddArg("fetch-timeout", "5m", "timeout", "ft").
+		AddArg2Env(EnvKeyFetchTimeout, "fetch-timeout")
+	configDefault.AddArg("idle-timeout", "1m", "idle", "it").
+		AddArg2Env(EnvKeyIdleTimeout, "idle-timeout")
+	configDefault.AddArg("fetch-target-chunk-size-mb", "8", "chunk-size", "ftcs").
+		AddArg2Env(impl.EnvKeyTargetChunkSizeMB, "fetch-target-chunk-size-mb")
+
+	configDefault.AddArg("time-start", "", "start", "ts").
+		AddArg2Env(EnvKeyTimeStart, "time-start")
+	configDefault.AddArg("time-end", "", "end", "te").
+		AddArg2Env(EnvKeyTimeEnd, "time-end")
+	configDefault.AddArg("time-duration-ago-as-end", "", "ago-as-end", "aae").
+		AddArg2Env(EnvKeyTimeDurationAgoAsEnd, "time-duration-ago-as-end")
+	configDefault.AddArg("time-duration", "21d", "duration", "td").
+		AddArg2Env(EnvKeyTimeDuration, "time-duration")
+
+	configDefault.AddArg("cluster-id", "", "cluster", "id", "cid").
+		AddArg2Env(EnvKeyClusterID, "cluster-id")
+	configDefault.AddArg("metrics", "", "m").
+		AddArg2Env(EnvKeyMetrics, "metrics")
+	configDefault.AddArg("metrics-fetch-step", "2m", "step", "mfs").
+		AddArg2Env(impl.EnvKeyMetricsFetchStep, "metrics-fetch-step")
+
+	configDefault.AddArg("clusters-fetch-timeout", "60s", "cft").
+		AddArg2Env(EnvKeyClustersFetchTimeout, "clusters-fetch-timeout")
+	configDefault.AddArg("clusters-page-size", "500", "page-size", "cps").
+		AddArg2Env(EnvKeyClustersPageSize, "clusters-page-size")
+	configDefault.AddArg("clusters-list-file", "", "list-file", "clf").
+		AddArg2Env(EnvKeyClustersListFile, "clusters-list-file")
+
+	configDefault.AddArg("cache-max-size-mb", "100000", "max-size", "cms").
+		AddArg2Env(impl.EnvKeyCacheMaxSizeMB, "cache-max-size-mb")
+
 	dig := cmds.AddSub("dig", "d").RegEmptyCmd("dig operations").Owner()
 
 	dig.AddSub("profile", "profiling", "prof", "p").RegPowerCmd(DigProfileCmd,
@@ -148,6 +272,10 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(EnvKeyTimeDuration, model.EnvOpTypeMayRead)
 
 	clusters := cmds.AddSub("clusters", "cluster", "c").RegEmptyCmd("cluster operations").Owner()
+
+	clusters.AddSub("fetch-all", "fa").RegFlowBuiltinCmd(
+		[]string{"clusters.dedicated.fetch", "clusters.premium.fetch", "metrics.fetch.all"},
+		"fetch all important metrics of dedicated and premium clusters")
 
 	dedicated := clusters.AddSub("dedicated", "ded").RegEmptyCmd("dedicated cluster operations").Owner()
 	dedicated.AddSub("fetch", "f").RegPowerCmd(ClustersDedicatedFetch,
@@ -269,6 +397,7 @@ func RegisterCmds(cmds *model.CmdTree) {
 
 func RegisterHelp(tc *ticat.TiCat) {
 	tc.SetHelpCmds(
+		"clusters.fetch-all",
 		"clusters.dedicated.fetch",
 		"clusters.premium.fetch",
 		"metrics.fetch",
