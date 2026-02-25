@@ -1,0 +1,54 @@
+# Testing Metadata
+# Suitable clusters and metrics for testing chunked vs single fetch
+
+# Active Clusters (us-west-2, have metrics data)
+# Format: cluster_id (region) - up_metric_count
+
+## Large cluster (63 up metrics)
+1379661944646413035    (aws/us-west-2)    # 62-63 up metrics, good for large dataset tests
+
+## Medium clusters (22-35 up metrics)
+10414284677066365162    (aws/us-west-2)    # 22 up metrics
+1379661944646415120     (aws/us-west-2)    # 35 up metrics
+10820083890659248481    (aws/us-west-2)    # 22 up metrics
+1379661944646413460     (aws/us-west-2)    # 26 up metrics
+
+## Other active clusters
+10301743683857887991    (aws/us-west-2)    # 39 up metrics
+1379661944643944089     (aws/us-west-2)    # 63 up metrics
+10407501123427565080    (aws/us-west-2)    # 31 up metrics
+1379661944646412606     (aws/us-west-2)    # 30 up metrics
+
+# Recommended Metrics for Testing
+up                              # Always available, multiple instances
+process_resident_memory_bytes   # Memory usage, medium cardinality
+go_goroutines                   # Low cardinality, quick to test
+
+# Recommended Test Durations
+1h    # Quick test, ~60 data points per series
+6h    # Medium test, ~360 data points per series
+
+# Test Commands Example
+# Chunked fetch (target-chunk-size-mb=1):
+#   ./tmp/tidbcloud-insight \
+#     '{tidbcloud-insight.auth.client-id=XXX}' \
+#     '{tidbcloud-insight.auth.client-secret=XXX}' \
+#     '{tidbcloud-insight.cache.dir=tmp/test/cache_chunked}' \
+#     '{tidbcloud-insight.fetch.target-chunk-size-mb=1}' \
+#     metrics.fetch cluster-id=1379661944646413035 metric=up duration=6h
+#
+# Single fetch (target-chunk-size-mb=100):
+#   ./tmp/tidbcloud-insight \
+#     '{tidbcloud-insight.auth.client-id=XXX}' \
+#     '{tidbcloud-insight.auth.client-secret=XXX}' \
+#     '{tidbcloud-insight.cache.dir=tmp/test/cache_single}' \
+#     '{tidbcloud-insight.fetch.target-chunk-size-mb=100}' \
+#     metrics.fetch cluster-id=1379661944646413035 metric=up duration=6h
+
+# Verified Test Cases (all passed chunked vs single comparison)
+# 2026-02-25:
+# - 1379661944646413035 / up / 6h -> labels=63, points=12649
+# - 1379661944646413035 / process_resident_memory_bytes / 1h -> labels=23, points=749
+# - 10414284677066365162 / up / 6h -> labels=23, points=4489
+# - 10414284677066365162 / go_goroutines / 1h -> labels=6, points=171
+# - 1379661944646415120 / up / 1h -> labels=36, points=1191
