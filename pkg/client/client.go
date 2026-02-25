@@ -535,7 +535,7 @@ func (c *Client) QueryMetric(ctx context.Context, clusterID, dsURL, metric strin
 		params.Set("query", metric)
 	}
 
-	fetchTimeout := 2 * time.Minute
+	fetchTimeout := 5 * time.Minute
 
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
@@ -669,8 +669,6 @@ func (c *Client) QueryMetricChunkedWithWriter(ctx context.Context, clusterID, ds
 		if adjustedEnd > end {
 			adjustedEnd = end
 		}
-
-		logger.Debugf("fetching %s [%d-%d] chunk=%d", metric, currentStart, adjustedEnd, currentChunk)
 
 		if writer != nil {
 			if err := writer.CheckCacheLimit(); err != nil {
