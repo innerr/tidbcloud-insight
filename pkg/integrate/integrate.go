@@ -38,6 +38,7 @@ func Integrate(tc *ticat.TiCat) error {
 	defEnv.Set(EnvKeyMetaDir, "./meta")
 	defEnv.Set(EnvKeyFetchTimeout, "5m")
 	defEnv.Set(EnvKeyIdleTimeout, "1m")
+	defEnv.SetInt(impl.EnvKeyFetchMaxRetries, 10)
 	defEnv.Set(EnvKeyRateLimitMaxBackoff, "5m")
 	defEnv.SetInt(impl.EnvKeyRateLimitDesiredConcurrency, 5)
 	defEnv.Set(EnvKeyRateLimitRecoveryInterval, "30s")
