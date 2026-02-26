@@ -52,7 +52,8 @@ type FetchQueue struct {
 	allPending []*FetchTask
 	inProgress int
 
-	results []*TaskResult
+	results     []*TaskResult
+	failedCount int
 
 	chunkSizeCache  map[string]int
 	adjustHistory   map[string]*AdjustRecord
@@ -66,13 +67,14 @@ type FetchQueue struct {
 
 	cacheLimitChecker CacheLimitChecker
 	cacheMaxSizeMB    int
+	maxRetries        int
 
 	wg sync.WaitGroup
 }
 
 func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler,
 	chunkSizeCache map[string]int, adjustHistory map[string]*AdjustRecord, firstFetchDone map[string]bool,
-	cacheLimitChecker CacheLimitChecker, cacheMaxSizeMB int) *FetchQueue {
+	cacheLimitChecker CacheLimitChecker, cacheMaxSizeMB int, maxRetries int) *FetchQueue {
 	ctx, cancel := context.WithCancel(parentCtx)
 
 	if chunkSizeCache == nil {
@@ -83,6 +85,9 @@ func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler,
 	}
 	if firstFetchDone == nil {
 		firstFetchDone = make(map[string]bool)
+	}
+	if maxRetries <= 0 {
+		maxRetries = 10
 	}
 
 	q := &FetchQueue{
@@ -97,6 +102,7 @@ func NewFetchQueue(parentCtx context.Context, workers int, handler TaskHandler,
 		handler:           handler,
 		cacheLimitChecker: cacheLimitChecker,
 		cacheMaxSizeMB:    cacheMaxSizeMB,
+		maxRetries:        maxRetries,
 	}
 	q.cond = sync.NewCond(&q.mu)
 
@@ -286,7 +292,14 @@ func (q *FetchQueue) completeTask(result *TaskResult) {
 	}
 
 	if !result.Success {
-		q.requeueTaskLocked(task)
+		if task.RetryCount >= q.maxRetries {
+			logger.Warnf("Task %s [%d-%d] failed after %d retries, giving up: %v", task.Metric, task.GapStart, task.GapEnd, task.RetryCount, result.Error)
+			q.failedCount++
+			q.results = append(q.results, result)
+		} else {
+			task.RetryCount++
+			q.requeueTaskLocked(task)
+		}
 		q.cond.Broadcast()
 		return
 	}
@@ -542,6 +555,10 @@ func (q *FetchQueue) Wait() []*TaskResult {
 
 	q.stopped = true
 	q.cond.Broadcast()
+
+	if q.failedCount > 0 {
+		logger.Warnf("Fetch completed with %d failed tasks (exceeded max retries of %d)", q.failedCount, q.maxRetries)
+	}
 
 	return q.results
 }
