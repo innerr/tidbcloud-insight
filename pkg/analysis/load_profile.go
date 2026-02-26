@@ -210,7 +210,7 @@ func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnaly
 	}
 
 	if len(commonQPS) >= 10 {
-		corr.QPSLatencyCorr = PearsonCorrelation(commonQPS, commonLat)
+		corr.QPSLatencyCorr = robustCorrelation(commonQPS, commonLat)
 	}
 
 	if len(commonQPS) >= 20 {
@@ -219,7 +219,7 @@ func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnaly
 			laggedQPS = append(laggedQPS, commonQPS[i-1])
 			laggedLat = append(laggedLat, commonLat[i])
 		}
-		corr.QPSLatencyLagged = PearsonCorrelation(laggedQPS, laggedLat)
+		corr.QPSLatencyLagged = robustCorrelation(laggedQPS, laggedLat)
 	}
 
 	absCorr := math.Abs(corr.QPSLatencyCorr)
@@ -243,6 +243,65 @@ func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnaly
 	}
 
 	return corr
+}
+
+func robustCorrelation(x, y []float64) float64 {
+	if len(x) != len(y) || len(x) < 5 {
+		return 0
+	}
+
+	sortedX := make([]float64, len(x))
+	sortedY := make([]float64, len(y))
+	copy(sortedX, x)
+	copy(sortedY, y)
+	sort.Float64s(sortedX)
+	sort.Float64s(sortedY)
+
+	q1X := percentile(sortedX, 0.25)
+	q3X := percentile(sortedX, 0.75)
+	q1Y := percentile(sortedY, 0.25)
+	q3Y := percentile(sortedY, 0.75)
+
+	iqrX := q3X - q1X
+	iqrY := q3Y - q1Y
+
+	var filteredX, filteredY []float64
+	for i := 0; i < len(x); i++ {
+		if x[i] >= q1X-1.5*iqrX && x[i] <= q3X+1.5*iqrX &&
+			y[i] >= q1Y-1.5*iqrY && y[i] <= q3Y+1.5*iqrY {
+			filteredX = append(filteredX, x[i])
+			filteredY = append(filteredY, y[i])
+		}
+	}
+
+	if len(filteredX) < 5 {
+		return PearsonCorrelation(x, y)
+	}
+
+	n := len(filteredX)
+	sumX, sumY := 0.0, 0.0
+	for i := 0; i < n; i++ {
+		sumX += filteredX[i]
+		sumY += filteredY[i]
+	}
+	meanX := sumX / float64(n)
+	meanY := sumY / float64(n)
+
+	cov := 0.0
+	stdX, stdY := 0.0, 0.0
+	for i := 0; i < n; i++ {
+		cov += (filteredX[i] - meanX) * (filteredY[i] - meanY)
+		stdX += (filteredX[i] - meanX) * (filteredX[i] - meanX)
+		stdY += (filteredY[i] - meanY) * (filteredY[i] - meanY)
+	}
+	stdX = math.Sqrt(stdX)
+	stdY = math.Sqrt(stdY)
+
+	if stdX == 0 || stdY == 0 {
+		return 0
+	}
+
+	return cov / (stdX * stdY)
 }
 
 func analyzeTrend(data []TimeSeriesPoint) TrendAnalysis {
@@ -781,30 +840,51 @@ func calculateSeasonality(data []TimeSeriesPoint) float64 {
 		return 0
 	}
 
-	var hourlyMeans []float64
+	hourlyMeansArr := make([]float64, 24)
 	for i := 0; i < 24; i++ {
 		if vals, ok := hourlyAvg[i]; ok {
-			hourlyMeans = append(hourlyMeans, mean(vals))
+			hourlyMeansArr[i] = mean(vals)
 		}
 	}
 
-	if len(hourlyMeans) < 12 {
-		return 0
-	}
-
-	overallMean := mean(hourlyMeans)
+	overallMean := mean(hourlyMeansArr)
 	if overallMean == 0 {
 		return 0
 	}
 
 	var variance float64
-	for _, m := range hourlyMeans {
+	for _, m := range hourlyMeansArr {
 		diff := (m - overallMean) / overallMean
 		variance += diff * diff
 	}
-	variance /= float64(len(hourlyMeans))
+	variance /= 24.0
 
-	return math.Min(1.0, variance*2)
+	peakHour := 0
+	troughHour := 0
+	maxVal := hourlyMeansArr[0]
+	minVal := hourlyMeansArr[0]
+	for i, v := range hourlyMeansArr {
+		if v > maxVal {
+			maxVal = v
+			peakHour = i
+		}
+		if v < minVal {
+			minVal = v
+			troughHour = i
+		}
+	}
+
+	amplitude := 0.0
+	if minVal > 0 {
+		amplitude = (maxVal - minVal) / minVal
+	}
+
+	_ = peakHour
+	_ = troughHour
+
+	seasonalityScore := math.Min(1.0, variance*2)*0.6 + math.Min(1.0, amplitude/3)*0.4
+
+	return seasonalityScore
 }
 
 func calculateTrendStrength(data []TimeSeriesPoint, slope float64) float64 {
@@ -817,8 +897,37 @@ func calculateTrendStrength(data []TimeSeriesPoint, slope float64) float64 {
 		return 0
 	}
 
-	absSlope := math.Abs(slope)
-	return math.Min(1.0, absSlope*math.Sqrt(n)*10)
+	vals := make([]float64, len(data))
+	for i, p := range data {
+		vals[i] = p.Value
+	}
+
+	detrended := make([]float64, len(vals))
+	avgVal := mean(vals)
+	for i, v := range vals {
+		detrended[i] = v - avgVal
+	}
+
+	var sumSquaredResiduals float64
+	for _, d := range detrended {
+		sumSquaredResiduals += d * d
+	}
+
+	var sumSquaredTotal float64
+	for _, v := range vals {
+		diff := v - avgVal
+		sumSquaredTotal += diff * diff
+	}
+
+	var r2 float64
+	if sumSquaredTotal > 0 {
+		r2 = 1 - sumSquaredResiduals/sumSquaredTotal
+	}
+
+	trendComponent := math.Min(1.0, math.Abs(slope)*math.Sqrt(n)*5)
+	consistencyComponent := math.Max(0, r2)
+
+	return trendComponent*0.5 + consistencyComponent*0.5
 }
 
 func calculateNoiseLevel(vals []float64) float64 {
@@ -944,41 +1053,63 @@ func calculateEMA(vals []float64, alpha float64) float64 {
 }
 
 func calculateBurstiness(vals []float64) float64 {
-	if len(vals) < 3 {
+	if len(vals) < 5 {
 		return 0
 	}
 
-	maxVals := make([]float64, 0, len(vals)/3)
-	for i := 0; i < len(vals); i += 3 {
-		end := i + 3
-		if end > len(vals) {
-			end = len(vals)
+	avgVal := mean(vals)
+	if avgVal == 0 {
+		return 0
+	}
+
+	varianceRatio := variance(vals) / avgVal
+	if varianceRatio < 0 {
+		varianceRatio = 0
+	}
+
+	sorted := make([]float64, len(vals))
+	copy(sorted, vals)
+	sort.Float64s(sorted)
+
+	p90 := percentile(sorted, 0.90)
+	p50 := percentile(sorted, 0.50)
+	p10 := percentile(sorted, 0.10)
+
+	var peakRatio float64
+	if p50 > 0 {
+		peakRatio = (p90 - p10) / p50
+	}
+
+	windowSize := 5
+	if len(vals) < windowSize {
+		windowSize = len(vals)
+	}
+	rollingVar := make([]float64, 0)
+	for i := windowSize; i < len(vals); i++ {
+		window := vals[i-windowSize : i]
+		rollingVar = append(rollingVar, variance(window))
+	}
+	var variabilityOfVariability float64
+	if len(rollingVar) > 1 {
+		variabilityOfVariability = stdDev(rollingVar) / (mean(rollingVar) + 1e-10)
+	}
+
+	spikeCount := 0
+	threshold := p90
+	for _, v := range vals {
+		if v > threshold {
+			spikeCount++
 		}
-		chunk := vals[i:end]
-		maxVals = append(maxVals, max(chunk))
 	}
+	spikeFrequency := float64(spikeCount) / float64(len(vals))
 
-	if len(maxVals) < 2 {
-		return 0
-	}
+	burstiness := 0.0
+	burstiness += math.Min(1.0, varianceRatio/avgVal) * 0.25
+	burstiness += math.Min(1.0, peakRatio/3.0) * 0.30
+	burstiness += math.Min(1.0, variabilityOfVariability) * 0.25
+	burstiness += spikeFrequency * 0.20
 
-	avgMax := mean(maxVals)
-	stdMax := stdDev(maxVals)
-
-	overallMean := mean(vals)
-	if overallMean == 0 {
-		return 0
-	}
-
-	cv := stdMax / avgMax
-	peakToMean := avgMax / overallMean
-
-	burstiness := (cv + peakToMean/10) / 2
-	if burstiness > 1 {
-		burstiness = 1
-	}
-
-	return burstiness
+	return math.Min(1.0, burstiness)
 }
 
 func calculateTrendSlope(data []TimeSeriesPoint) float64 {
@@ -1016,24 +1147,26 @@ func calculateTrendSlope(data []TimeSeriesPoint) float64 {
 func classifyStability(cv float64) string {
 	if cv < 0.1 {
 		return "very_stable"
-	} else if cv < 0.2 {
+	} else if cv < 0.25 {
 		return "stable"
-	} else if cv < 0.4 {
+	} else if cv < 0.45 {
 		return "moderate"
-	} else if cv < 0.6 {
+	} else if cv < 0.7 {
 		return "variable"
 	}
 	return "highly_variable"
 }
 
 func classifyLoad(meanQPS float64) string {
-	if meanQPS < 100 {
+	if meanQPS < 50 {
+		return "very_light"
+	} else if meanQPS < 200 {
 		return "light"
 	} else if meanQPS < 1000 {
 		return "moderate"
-	} else if meanQPS < 10000 {
+	} else if meanQPS < 5000 {
 		return "heavy"
-	} else if meanQPS < 50000 {
+	} else if meanQPS < 20000 {
 		return "very_heavy"
 	}
 	return "extreme"
@@ -1042,22 +1175,58 @@ func classifyLoad(meanQPS float64) string {
 func classifyTraffic(profile *LoadProfile) string {
 	pattern := profile.DailyPattern
 	weekly := profile.WeeklyPattern
+	char := profile.Characteristics
+	qps := profile.QPSProfile
 
-	hasDailyPattern := pattern.PeakToOffPeak > 1.5
-	hasWeeklyPattern := weekly.WeekendDrop > 0.2
-	isBusinessHours := pattern.BusinessHours.Ratio > 1.2
+	hasDailyPattern := pattern.PeakToOffPeak > 1.4
+	hasStrongDailyPattern := pattern.PeakToOffPeak > 2.0
+	hasWeeklyPattern := math.Abs(weekly.WeekendDrop) > 0.15
+	isBusinessHours := pattern.BusinessHours.Ratio > 1.15
+	isHighlyVariable := qps.CV > 0.5
+	isBursty := qps.PeakToAvg > 4 || char.Burstiness > 0.4
+	isConstant := qps.CV < 0.15 && qps.PeakToAvg < 2
+	hasMultimodal := char.Seasonality > 0.3 && pattern.PatternStrength > 0.2
 
-	if hasDailyPattern && hasWeeklyPattern && isBusinessHours {
+	if hasStrongDailyPattern && hasWeeklyPattern && isBusinessHours {
 		return "business_traffic"
-	} else if hasDailyPattern && !hasWeeklyPattern {
+	}
+
+	if hasDailyPattern && hasWeeklyPattern {
+		return "periodic_with_weekly_variation"
+	}
+
+	if hasStrongDailyPattern {
 		return "daily_periodic"
-	} else if !hasDailyPattern && profile.QPSProfile.CV < 0.2 {
+	}
+
+	if hasDailyPattern && !hasWeeklyPattern {
+		return "daily_periodic"
+	}
+
+	if isConstant {
 		return "constant"
-	} else if profile.QPSProfile.PeakToAvg > 5 {
+	}
+
+	if isBursty && isHighlyVariable {
+		return "highly_bursty"
+	}
+
+	if isBursty {
 		return "bursty"
-	} else if profile.Characteristics.Burstiness > 0.5 {
+	}
+
+	if isHighlyVariable && char.Burstiness > 0.5 {
 		return "unpredictable"
 	}
+
+	if hasMultimodal {
+		return "multimodal"
+	}
+
+	if isHighlyVariable {
+		return "variable"
+	}
+
 	return "mixed"
 }
 
