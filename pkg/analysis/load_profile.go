@@ -551,12 +551,21 @@ func analyzeDailyPattern(data []TimeSeriesPoint) DailyPattern {
 
 	overallMedian := median(allAvgs)
 	overallMean := mean(allAvgs)
+	overallStd := stdDev(allAvgs)
 
 	var peakAvg, offPeakAvg float64
 	var peakHours, offPeakHours []int
 
-	peakThreshold := overallMedian * 1.3
-	offPeakThreshold := overallMedian * 0.7
+	dynamicThreshold := overallStd * 0.5
+	peakThreshold := overallMedian + dynamicThreshold
+	offPeakThreshold := overallMedian - dynamicThreshold
+
+	if peakThreshold < overallMedian*1.2 {
+		peakThreshold = overallMedian * 1.2
+	}
+	if offPeakThreshold > overallMedian*0.8 {
+		offPeakThreshold = overallMedian * 0.8
+	}
 
 	for hour, avg := range pattern.HourlyAvg {
 		if avg > peakThreshold {
@@ -931,7 +940,7 @@ func calculateTrendStrength(data []TimeSeriesPoint, slope float64) float64 {
 }
 
 func calculateNoiseLevel(vals []float64) float64 {
-	if len(vals) < 3 {
+	if len(vals) < 5 {
 		return 0
 	}
 
@@ -940,6 +949,11 @@ func calculateNoiseLevel(vals []float64) float64 {
 		diffs[i] = math.Abs(vals[i+1] - vals[i])
 	}
 
+	sortedVals := make([]float64, len(vals))
+	copy(sortedVals, vals)
+	sort.Float64s(sortedVals)
+	iqr := percentile(sortedVals, 0.75) - percentile(sortedVals, 0.25)
+
 	avgDiff := mean(diffs)
 	avgVal := mean(vals)
 
@@ -947,7 +961,14 @@ func calculateNoiseLevel(vals []float64) float64 {
 		return 0
 	}
 
-	return math.Min(1.0, avgDiff/avgVal)
+	noiseFromDiffs := math.Min(1.0, avgDiff/avgVal)
+
+	noiseFromIQR := 0.0
+	if avgVal > 0 {
+		noiseFromIQR = math.Min(1.0, iqr/avgVal)
+	}
+
+	return (noiseFromDiffs + noiseFromIQR) / 2
 }
 
 func calculateAutocorrelation(vals []float64) float64 {
@@ -961,10 +982,7 @@ func calculateAutocorrelation(vals []float64) float64 {
 		return 0
 	}
 
-	var numerator, denominator float64
-	for i := 1; i < n; i++ {
-		numerator += (vals[i] - avg) * (vals[i-1] - avg)
-	}
+	var denominator float64
 	for i := 0; i < n; i++ {
 		denominator += (vals[i] - avg) * (vals[i] - avg)
 	}
@@ -973,11 +991,28 @@ func calculateAutocorrelation(vals []float64) float64 {
 		return 0
 	}
 
-	return numerator / denominator
+	var autocorr1, autocorr2, autocorr3 float64
+	for i := 1; i < n; i++ {
+		autocorr1 += (vals[i] - avg) * (vals[i-1] - avg)
+	}
+	for i := 2; i < n; i++ {
+		autocorr2 += (vals[i] - avg) * (vals[i-2] - avg)
+	}
+	for i := 3; i < n; i++ {
+		autocorr3 += (vals[i] - avg) * (vals[i-3] - avg)
+	}
+
+	autocorr1 /= denominator
+	autocorr2 /= denominator
+	autocorr3 /= denominator
+
+	weightedAutocorr := (autocorr1*0.5 + autocorr2*0.3 + autocorr3*0.2)
+
+	return math.Max(-1, math.Min(1, weightedAutocorr))
 }
 
 func detectChangePoints(data []TimeSeriesPoint) int {
-	if len(data) < 20 {
+	if len(data) < 30 {
 		return 0
 	}
 
@@ -988,9 +1023,15 @@ func detectChangePoints(data []TimeSeriesPoint) int {
 
 	changePoints := 0
 	windowSize := 10
-	threshold := 2.0
+	threshold := 2.5
+	minGap := 5
+	lastChangePoint := -minGap - 1
 
 	for i := windowSize; i < len(vals)-windowSize; i++ {
+		if i-lastChangePoint < minGap {
+			continue
+		}
+
 		before := vals[i-windowSize : i]
 		after := vals[i : i+windowSize]
 
@@ -999,14 +1040,24 @@ func detectChangePoints(data []TimeSeriesPoint) int {
 		beforeStd := stdDev(before)
 		afterStd := stdDev(after)
 
-		combinedStd := math.Sqrt((beforeStd*beforeStd + afterStd*afterStd) / 2)
-		if combinedStd == 0 {
+		pooledStd := math.Sqrt((beforeStd*beforeStd + afterStd*afterStd) / 2)
+		if pooledStd == 0 {
 			continue
 		}
 
-		diff := math.Abs(afterMean-beforeMean) / combinedStd
-		if diff > threshold {
+		tStat := math.Abs(afterMean-beforeMean) / pooledStd / math.Sqrt(2.0/float64(windowSize))
+
+		overallMean := mean(vals)
+		if overallMean > 0 {
+			relativeChange := math.Abs(afterMean-beforeMean) / overallMean
+			if relativeChange < 0.1 {
+				continue
+			}
+		}
+
+		if tStat > threshold {
 			changePoints++
+			lastChangePoint = i
 		}
 	}
 
@@ -1023,17 +1074,32 @@ func calculateAnomalyScore(vals []float64, profile *LoadProfile) float64 {
 
 	score := 0.0
 
-	if qps.CV > 0.5 {
-		score += 0.3
+	if qps.CV > 0.6 {
+		score += 0.25
+	} else if qps.CV > 0.4 {
+		score += 0.15
 	}
-	if qps.OutlierRatio > 0.1 {
-		score += 0.2
+
+	if qps.OutlierRatio > 0.15 {
+		score += 0.20
+	} else if qps.OutlierRatio > 0.08 {
+		score += 0.10
 	}
-	if lat.P99toP50 > 5 {
-		score += 0.3
+
+	if lat.P99toP50 > 8 {
+		score += 0.25
+	} else if lat.P99toP50 > 5 {
+		score += 0.15
 	}
-	if lat.CV > 0.5 {
-		score += 0.2
+
+	if lat.CV > 0.6 {
+		score += 0.20
+	} else if lat.CV > 0.4 {
+		score += 0.10
+	}
+
+	if profile.Characteristics.ChangePoints > 5 {
+		score += 0.10
 	}
 
 	return math.Min(1.0, score)
