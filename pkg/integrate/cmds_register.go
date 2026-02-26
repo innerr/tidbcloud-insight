@@ -49,7 +49,7 @@ const (
 )
 
 func RegisterCmds(cmds *model.CmdTree) {
-	configCmd := cmds.AddSub("config", "cfg").RegCmd(noOpCmd, "set config values", "")
+	configCmd := cmds.AddSub("config", "cfg", "conf").RegCmd(noOpCmd, "set config values", "")
 
 	configCmd.AddArg("cache-dir", "", "cache", "cd").
 		AddArg2Env(EnvKeyCacheDir, "cache-dir")
@@ -84,6 +84,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg2Env(EnvKeyIdleTimeout, "idle-timeout")
 	configCmd.AddArg("fetch-target-chunk-size-mb", "", "chunk-size", "ftcs").
 		AddArg2Env(impl.EnvKeyTargetChunkSizeMB, "fetch-target-chunk-size-mb")
+	configCmd.AddArg("fetch-max-retries", "", "max-retries", "fmr").
+		AddArg2Env(impl.EnvKeyFetchMaxRetries, "fetch-max-retries")
 
 	configCmd.AddArg("time-start", "", "start", "ts").
 		AddArg2Env(EnvKeyTimeStart, "time-start")
@@ -142,6 +144,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddArg2Env(EnvKeyIdleTimeout, "idle-timeout")
 	configDefault.AddArg("fetch-target-chunk-size-mb", "8", "chunk-size", "ftcs").
 		AddArg2Env(impl.EnvKeyTargetChunkSizeMB, "fetch-target-chunk-size-mb")
+	configDefault.AddArg("fetch-max-retries", "10", "max-retries", "fmr").
+		AddArg2Env(impl.EnvKeyFetchMaxRetries, "fetch-max-retries")
 
 	configDefault.AddArg("time-start", "", "start", "ts").
 		AddArg2Env(EnvKeyTimeStart, "time-start")
@@ -326,7 +330,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
-		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead).Owner()
+		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyFetchMaxRetries, model.EnvOpTypeRead).Owner()
 
 	metricsFetch.AddSub("random", "r").RegPowerCmd(MetricsFetchRandom,
 		"fetch metrics from a random cluster, writes cluster-id to env").
@@ -351,6 +356,7 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyFetchMaxRetries, model.EnvOpTypeRead).
 		AddEnvOp(EnvKeyClusterID, model.EnvOpTypeWrite)
 
 	metricsFetch.AddSub("all", "a").RegPowerCmd(MetricsFetchAll,
@@ -372,7 +378,8 @@ func RegisterCmds(cmds *model.CmdTree) {
 		AddEnvOp(impl.EnvKeyMetricsFetchStep, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyTargetChunkSizeMB, model.EnvOpTypeRead).
 		AddEnvOp(impl.EnvKeyRateLimitDesiredConcurrency, model.EnvOpTypeRead).
-		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead)
+		AddEnvOp(impl.EnvKeyCacheMaxSizeMB, model.EnvOpTypeRead).
+		AddEnvOp(impl.EnvKeyFetchMaxRetries, model.EnvOpTypeRead)
 
 	metricsCache := metrics.AddSub("cache", "ca").RegEmptyCmd("metrics cache operations").Owner()
 	metricsCache.AddSub("list", "l", "ls").RegPowerCmd(MetricsCacheListCmd,

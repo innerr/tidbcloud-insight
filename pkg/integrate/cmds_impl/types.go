@@ -14,6 +14,7 @@ const (
 	EnvKeyMetricsFetchStep            = EnvPrefix + "metrics-fetch-step"
 	EnvKeyRateLimitDesiredConcurrency = EnvPrefix + "rate-limit.desired-concurrency"
 	EnvKeyCacheMaxSizeMB              = EnvPrefix + "cache.max-size-mb"
+	EnvKeyFetchMaxRetries             = EnvPrefix + "fetch.max-retries"
 )
 
 type AuthManager = auth.Manager

@@ -18,6 +18,7 @@ type MetricsFetcherConfig struct {
 	MaxConcurrency    int
 	Step              int
 	CacheMaxSizeMB    int
+	MaxRetries        int
 }
 
 type FetchResult struct {
@@ -114,11 +115,16 @@ func NewMetricsFetcherConfigFromEnv(env *model.Env) MetricsFetcherConfig {
 			step = int(duration.Seconds())
 		}
 	}
+	maxRetries := env.GetInt(EnvKeyFetchMaxRetries)
+	if maxRetries <= 0 {
+		maxRetries = 10
+	}
 	return MetricsFetcherConfig{
 		TargetChunkSizeMB: env.GetInt(EnvKeyTargetChunkSizeMB),
 		MaxConcurrency:    env.GetInt(EnvKeyRateLimitDesiredConcurrency),
 		Step:              step,
 		CacheMaxSizeMB:    env.GetInt(EnvKeyCacheMaxSizeMB),
+		MaxRetries:        maxRetries,
 	}
 }
 
@@ -150,6 +156,7 @@ type FetchTask struct {
 	Step         int
 	ChunkSize    int
 	IsFirstFetch bool
+	RetryCount   int
 }
 
 func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, metrics []string, startTS, endTS int64, step int) (*FetchResult, error) {
@@ -214,7 +221,7 @@ func (f *MetricsFetcher) Fetch(ctx context.Context, clusterID, dsURL string, met
 	}
 
 	f.cacheMu.Lock()
-	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler, f.chunkSizeCache, f.adjustHistory, f.firstFetchDone, f.cacheSizeTracker, f.config.CacheMaxSizeMB)
+	queue := NewFetchQueue(ctx, f.config.MaxConcurrency, handler, f.chunkSizeCache, f.adjustHistory, f.firstFetchDone, f.cacheSizeTracker, f.config.CacheMaxSizeMB, f.config.MaxRetries)
 	f.cacheMu.Unlock()
 
 	queue.SubmitBatch(tasks)
