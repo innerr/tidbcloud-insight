@@ -312,6 +312,8 @@ func (r *RateLimiter) RecordFailure(statusCode int, err error) {
 		if r.onBackoffCallback != nil {
 			r.onBackoffCallback()
 		}
+
+		r.cond.Broadcast()
 	}
 }
 
