@@ -25,6 +25,19 @@ type LoadProfile struct {
 	Correlation        CorrelationAnalysis  `json:"correlation"`
 	TrendAnalysis      TrendAnalysis        `json:"trend_analysis"`
 	ResourceEfficiency ResourceEfficiency   `json:"resource_efficiency"`
+	Insights           *ClusterInsights     `json:"insights,omitempty"`
+}
+
+type ClusterInsights struct {
+	OverallHealth             string   `json:"overall_health"`
+	RiskFactors               []string `json:"risk_factors"`
+	OptimizationOpportunities []string `json:"optimization_opportunities"`
+	PatternType               string   `json:"pattern_type"`
+	RecommendedActions        []string `json:"recommended_actions"`
+	AnomalyIndicators         []string `json:"anomaly_indicators"`
+	PerformanceScore          float64  `json:"performance_score"`
+	StabilityScore            float64  `json:"stability_score"`
+	EfficiencyScore           float64  `json:"efficiency_score"`
 }
 
 type MonthlyPattern struct {
@@ -248,6 +261,8 @@ func AnalyzeLoadProfileFull(
 		profile.InstanceSkew = analyzeInstanceSkew(tidbInstanceQPS, tidbInstanceLatency, tikvInstanceQPS, tikvInstanceLatency)
 	}
 
+	profile.Insights = generateClusterInsights(profile)
+
 	return profile
 }
 
@@ -375,6 +390,207 @@ func extractValuesFromTSP(points []TimeSeriesPoint) []float64 {
 		vals[i] = p.Value
 	}
 	return vals
+}
+
+func generateClusterInsights(profile *LoadProfile) *ClusterInsights {
+	insights := &ClusterInsights{
+		RiskFactors:               []string{},
+		OptimizationOpportunities: []string{},
+		RecommendedActions:        []string{},
+		AnomalyIndicators:         []string{},
+	}
+
+	insights.PerformanceScore = calculatePerformanceScore(profile)
+	insights.StabilityScore = calculateStabilityScore(profile)
+	insights.EfficiencyScore = calculateEfficiencyScore(profile)
+
+	insights.PatternType = classifyOverallPattern(profile)
+
+	identifyRiskFactors(profile, insights)
+	identifyOptimizations(profile, insights)
+	identifyAnomalies(profile, insights)
+
+	overallScore := (insights.PerformanceScore + insights.StabilityScore + insights.EfficiencyScore) / 3
+	if overallScore >= 0.7 {
+		insights.OverallHealth = "healthy"
+	} else if overallScore >= 0.5 {
+		insights.OverallHealth = "moderate"
+	} else {
+		insights.OverallHealth = "needs_attention"
+	}
+
+	if len(insights.RiskFactors) > 2 {
+		insights.OverallHealth = "needs_attention"
+	}
+
+	return insights
+}
+
+func calculatePerformanceScore(profile *LoadProfile) float64 {
+	score := 1.0
+
+	if profile.LatencyProfile.P99Ms > 100 {
+		score -= 0.2
+	}
+	if profile.LatencyProfile.P99Ms > 500 {
+		score -= 0.3
+	}
+	if profile.LatencyProfile.CV > 0.5 {
+		score -= 0.1
+	}
+	if profile.QPSProfile.CV > 0.7 {
+		score -= 0.1
+	}
+
+	return math.Max(0, math.Min(1, score))
+}
+
+func calculateStabilityScore(profile *LoadProfile) float64 {
+	score := 1.0
+
+	stabilityClass := profile.Characteristics.StabilityClass
+	switch stabilityClass {
+	case "highly_variable":
+		score -= 0.4
+	case "variable":
+		score -= 0.2
+	case "moderate":
+		score -= 0.1
+	}
+
+	if profile.Characteristics.ChangePoints > 3 {
+		score -= 0.1 * float64(profile.Characteristics.ChangePoints-3)
+	}
+
+	if profile.Characteristics.NoiseLevel > 0.5 {
+		score -= 0.1
+	}
+
+	return math.Max(0, math.Min(1, score))
+}
+
+func calculateEfficiencyScore(profile *LoadProfile) float64 {
+	score := 1.0
+
+	if profile.InstanceSkew != nil && profile.InstanceSkew.SkewRiskLevel == "high" {
+		score -= 0.2
+	}
+
+	if profile.QPSProfile.PeakToAvg > 5 {
+		score -= 0.1
+	}
+	if profile.QPSProfile.PeakToAvg > 10 {
+		score -= 0.2
+	}
+
+	if profile.ResourceEfficiency.EfficiencyScore < 0.5 {
+		score -= 0.1
+	}
+
+	return math.Max(0, math.Min(1, score))
+}
+
+func classifyOverallPattern(profile *LoadProfile) string {
+	if profile.Periodicity.DominantPeriod == "none" {
+		if profile.Characteristics.Burstiness > 0.5 {
+			return "unpredictable"
+		}
+		return "flat"
+	}
+
+	var patterns []string
+	if profile.Periodicity.DailyStrength > 0.3 {
+		patterns = append(patterns, "daily")
+	}
+	if profile.Periodicity.WeeklyStrength > 0.2 {
+		patterns = append(patterns, "weekly")
+	}
+	if profile.Periodicity.MonthlyStrength > 0.15 {
+		patterns = append(patterns, "monthly")
+	}
+
+	if len(patterns) >= 2 {
+		return "multi_periodic"
+	} else if len(patterns) == 1 {
+		return patterns[0] + "_periodic"
+	}
+
+	return "mixed"
+}
+
+func identifyRiskFactors(profile *LoadProfile, insights *ClusterInsights) {
+	if profile.LatencyProfile.P99Ms > 500 {
+		insights.RiskFactors = append(insights.RiskFactors, "high_latency_p99")
+	}
+
+	if profile.Characteristics.StabilityClass == "highly_variable" {
+		insights.RiskFactors = append(insights.RiskFactors, "highly_variable_load")
+	}
+
+	if profile.InstanceSkew != nil && profile.InstanceSkew.SkewRiskLevel == "high" {
+		insights.RiskFactors = append(insights.RiskFactors, "instance_imbalance")
+	}
+
+	if profile.Characteristics.ChangePoints > 5 {
+		insights.RiskFactors = append(insights.RiskFactors, "frequent_regime_changes")
+	}
+
+	if profile.Characteristics.AnomalyScore > 0.5 {
+		insights.RiskFactors = append(insights.RiskFactors, "anomaly_prone")
+	}
+
+	if profile.Workload != nil && profile.Workload.HotspotRisk == "high" {
+		insights.RiskFactors = append(insights.RiskFactors, "hotspot_risk")
+	}
+}
+
+func identifyOptimizations(profile *LoadProfile, insights *ClusterInsights) {
+	if profile.QPSProfile.PeakToAvg > 3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"consider_autoscaling_for_peak_load")
+	}
+
+	if profile.InstanceSkew != nil && len(profile.InstanceSkew.TiDBSkew.HotInstances) > 0 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"balance_load_across_instances")
+	}
+
+	if profile.Periodicity.DailyStrength > 0.5 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"scheduled_scaling_based_on_daily_pattern")
+	}
+
+	if profile.Workload != nil && profile.Workload.WriteAmplification > 3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"optimize_write_pattern_to_reduce_amplification")
+	}
+
+	if profile.LatencyProfile.TailRatio > 3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"investigate_latency_tail_issues")
+	}
+}
+
+func identifyAnomalies(profile *LoadProfile, insights *ClusterInsights) {
+	if profile.QPSProfile.CV > 1.0 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "extreme_qps_variability")
+	}
+
+	if profile.LatencyProfile.SpikeRatio > 0.3 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "latency_spikes_detected")
+	}
+
+	if profile.Characteristics.AnomalyScore > 0.7 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "high_anomaly_score")
+	}
+
+	if profile.WeeklyPattern.WeekendDrop < -0.3 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "significant_weekend_drop")
+	}
+
+	if profile.MonthlyPattern.HasMonthlyPattern && profile.MonthlyPattern.PatternStrength > 0.3 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "monthly_cycle_detected")
+	}
 }
 
 func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnalysis {
