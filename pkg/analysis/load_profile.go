@@ -164,7 +164,7 @@ func AnalyzeLoadProfileWithWorkload(
 	if len(qpsData) > 0 {
 		first := qpsData[0].Timestamp
 		last := qpsData[len(qpsData)-1].Timestamp
-		profile.DurationHours = float64(last-first) / 3600
+		profile.DurationHours = float64(last-first) / 3600000
 		profile.Samples = len(qpsData)
 	}
 
@@ -528,7 +528,7 @@ func analyzeDailyPattern(data []TimeSeriesPoint) DailyPattern {
 
 	hourlyData := make(map[int][]float64)
 	for _, p := range data {
-		hour := time.Unix(p.Timestamp, 0).Hour()
+		hour := time.Unix(p.Timestamp/1000, 0).Hour()
 		hourlyData[hour] = append(hourlyData[hour], p.Value)
 	}
 
@@ -706,7 +706,7 @@ func analyzeWeeklyPattern(data []TimeSeriesPoint) WeeklyPattern {
 	var weekdayCount, weekendCount int
 
 	for _, p := range data {
-		t := time.Unix(p.Timestamp, 0)
+		t := time.Unix(p.Timestamp/1000, 0)
 		dayKey := t.Format("2006-01-02")
 		dailyData[dayKey] = append(dailyData[dayKey], p.Value)
 
@@ -841,7 +841,7 @@ func calculateSeasonality(data []TimeSeriesPoint) float64 {
 
 	hourlyAvg := make(map[int][]float64)
 	for _, p := range data {
-		hour := time.Unix(p.Timestamp, 0).Hour()
+		hour := time.Unix(p.Timestamp/1000, 0).Hour()
 		hourlyAvg[hour] = append(hourlyAvg[hour], p.Value)
 	}
 
