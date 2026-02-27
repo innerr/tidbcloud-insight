@@ -842,7 +842,7 @@ func analyzeCharacteristics(data []TimeSeriesPoint, profile *LoadProfile) Charac
 	char.ChangePoints = detectChangePoints(data)
 	char.AnomalyScore = calculateAnomalyScore(vals, profile)
 
-	char.StabilityClass = classifyStability(profile.QPSProfile.CV)
+	char.StabilityClass = classifyStabilityMulti(profile.QPSProfile.CV, char.TrendStrength, char.Autocorrelation, char.ChangePoints)
 	char.LoadClass = classifyLoad(profile.QPSProfile.Mean)
 	char.TrafficType = classifyTraffic(profile)
 
@@ -1243,6 +1243,47 @@ func classifyStability(cv float64) string {
 	} else if cv < 0.45 {
 		return "moderate"
 	} else if cv < 0.7 {
+		return "variable"
+	}
+	return "highly_variable"
+}
+
+func classifyStabilityMulti(cv, trendStrength, autocorr float64, changePoints int) string {
+	stabilityScore := 0.0
+
+	if cv < 0.1 {
+		stabilityScore += 2.0
+	} else if cv < 0.25 {
+		stabilityScore += 1.5
+	} else if cv < 0.45 {
+		stabilityScore += 1.0
+	} else if cv < 0.7 {
+		stabilityScore += 0.5
+	}
+
+	if trendStrength < 0.1 {
+		stabilityScore += 1.0
+	} else if trendStrength < 0.3 {
+		stabilityScore += 0.5
+	}
+
+	if autocorr > 0.7 {
+		stabilityScore += 0.5
+	}
+
+	if changePoints == 0 {
+		stabilityScore += 0.5
+	} else if changePoints > 3 {
+		stabilityScore -= 0.5
+	}
+
+	if stabilityScore >= 3.5 {
+		return "very_stable"
+	} else if stabilityScore >= 2.5 {
+		return "stable"
+	} else if stabilityScore >= 1.5 {
+		return "moderate"
+	} else if stabilityScore >= 0.5 {
 		return "variable"
 	}
 	return "highly_variable"
