@@ -10,18 +10,62 @@ import (
 )
 
 type LoadProfile struct {
-	ClusterID          string              `json:"cluster_id"`
-	DurationHours      float64             `json:"duration_hours"`
-	Samples            int                 `json:"samples"`
-	QPSProfile         QPSProfile          `json:"qps_profile"`
-	LatencyProfile     LatencyProfile      `json:"latency_profile"`
-	DailyPattern       DailyPattern        `json:"daily_pattern"`
-	WeeklyPattern      WeeklyPattern       `json:"weekly_pattern"`
-	Characteristics    Characteristics     `json:"characteristics"`
-	Workload           *WorkloadProfile    `json:"workload,omitempty"`
-	Correlation        CorrelationAnalysis `json:"correlation"`
-	TrendAnalysis      TrendAnalysis       `json:"trend_analysis"`
-	ResourceEfficiency ResourceEfficiency  `json:"resource_efficiency"`
+	ClusterID          string               `json:"cluster_id"`
+	DurationHours      float64              `json:"duration_hours"`
+	Samples            int                  `json:"samples"`
+	QPSProfile         QPSProfile           `json:"qps_profile"`
+	LatencyProfile     LatencyProfile       `json:"latency_profile"`
+	DailyPattern       DailyPattern         `json:"daily_pattern"`
+	WeeklyPattern      WeeklyPattern        `json:"weekly_pattern"`
+	MonthlyPattern     MonthlyPattern       `json:"monthly_pattern"`
+	Periodicity        PeriodicityProfile   `json:"periodicity"`
+	Characteristics    Characteristics      `json:"characteristics"`
+	Workload           *WorkloadProfile     `json:"workload,omitempty"`
+	InstanceSkew       *InstanceSkewProfile `json:"instance_skew,omitempty"`
+	Correlation        CorrelationAnalysis  `json:"correlation"`
+	TrendAnalysis      TrendAnalysis        `json:"trend_analysis"`
+	ResourceEfficiency ResourceEfficiency   `json:"resource_efficiency"`
+}
+
+type MonthlyPattern struct {
+	HasMonthlyPattern    bool            `json:"has_monthly_pattern"`
+	PatternStrength      float64         `json:"pattern_strength"`
+	WeekOfMonthVariation map[int]float64 `json:"week_of_month_variation"`
+	FirstWeekRatio       float64         `json:"first_week_ratio"`
+	MidMonthRatio        float64         `json:"mid_month_ratio"`
+	LastWeekRatio        float64         `json:"last_week_ratio"`
+	ConsistencyScore     float64         `json:"consistency_score"`
+}
+
+type PeriodicityProfile struct {
+	DailyStrength      float64 `json:"daily_strength"`
+	WeeklyStrength     float64 `json:"weekly_strength"`
+	MonthlyStrength    float64 `json:"monthly_strength"`
+	DominantPeriod     string  `json:"dominant_period"`
+	PeriodicityScore   float64 `json:"periodicity_score"`
+	HasMultiplePeriods bool    `json:"has_multiple_periods"`
+}
+
+type InstanceSkewProfile struct {
+	TiDBSkew            InstanceSkewDetail `json:"tidb_skew"`
+	TiKVSkew            InstanceSkewDetail `json:"tikv_skew"`
+	HasQPSImbalance     bool               `json:"has_qps_imbalance"`
+	HasLatencyImbalance bool               `json:"has_latency_imbalance"`
+	SkewRiskLevel       string             `json:"skew_risk_level"`
+	HotInstanceCount    int                `json:"hot_instance_count"`
+	Recommendation      string             `json:"recommendation"`
+}
+
+type InstanceSkewDetail struct {
+	InstanceCount          int                `json:"instance_count"`
+	QPSDistribution        map[string]float64 `json:"qps_distribution"`
+	LatencyDistribution    map[string]float64 `json:"latency_distribution"`
+	QPSSkewCoefficient     float64            `json:"qps_skew_coefficient"`
+	LatencySkewCoefficient float64            `json:"latency_skew_coefficient"`
+	HotInstances           []string           `json:"hot_instances"`
+	ColdInstances          []string           `json:"cold_instances"`
+	MaxQPSRatio            float64            `json:"max_qps_ratio"`
+	MinQPSRatio            float64            `json:"min_qps_ratio"`
 }
 
 type CorrelationAnalysis struct {
@@ -172,6 +216,8 @@ func AnalyzeLoadProfileWithWorkload(
 	profile.LatencyProfile = analyzeLatencyProfile(latencyData)
 	profile.DailyPattern = analyzeDailyPattern(qpsData)
 	profile.WeeklyPattern = analyzeWeeklyPattern(qpsData)
+	profile.MonthlyPattern = analyzeMonthlyPattern(qpsData)
+	profile.Periodicity = analyzePeriodicity(qpsData, profile.DailyPattern, profile.WeeklyPattern, profile.MonthlyPattern)
 	profile.Characteristics = analyzeCharacteristics(qpsData, profile)
 	profile.Correlation = analyzeCorrelation(qpsData, latencyData)
 	profile.TrendAnalysis = analyzeTrend(qpsData)
@@ -827,6 +873,131 @@ func calculateWeeklyConsistency(dayOfWeekData map[int][]float64) float64 {
 
 	avgCV := totalCV / float64(count)
 	return math.Max(0, 1.0-avgCV)
+}
+
+func analyzeMonthlyPattern(data []TimeSeriesPoint) MonthlyPattern {
+	pattern := MonthlyPattern{
+		WeekOfMonthVariation: make(map[int]float64),
+	}
+
+	if len(data) < 672 {
+		return pattern
+	}
+
+	weekData := make(map[int][]float64)
+	for _, p := range data {
+		t := time.Unix(p.Timestamp/1000, 0)
+		day := t.Day()
+		weekOfMonth := (day - 1) / 7
+		if weekOfMonth > 4 {
+			weekOfMonth = 4
+		}
+		weekData[weekOfMonth] = append(weekData[weekOfMonth], p.Value)
+	}
+
+	if len(weekData) < 3 {
+		return pattern
+	}
+
+	for week, vals := range weekData {
+		pattern.WeekOfMonthVariation[week] = mean(vals)
+	}
+
+	var weekAvgs []float64
+	for week := 0; week <= 4; week++ {
+		if avg, ok := pattern.WeekOfMonthVariation[week]; ok {
+			weekAvgs = append(weekAvgs, avg)
+		}
+	}
+
+	if len(weekAvgs) < 3 {
+		return pattern
+	}
+
+	overallMean := mean(weekAvgs)
+	if overallMean == 0 {
+		return pattern
+	}
+
+	if firstWeek, ok := pattern.WeekOfMonthVariation[0]; ok {
+		pattern.FirstWeekRatio = firstWeek / overallMean
+	}
+	if midWeek, ok := pattern.WeekOfMonthVariation[2]; ok {
+		pattern.MidMonthRatio = midWeek / overallMean
+	}
+	if lastWeek, ok := pattern.WeekOfMonthVariation[4]; ok {
+		pattern.LastWeekRatio = lastWeek / overallMean
+	}
+
+	var variance float64
+	for _, avg := range weekAvgs {
+		diff := (avg - overallMean) / overallMean
+		variance += diff * diff
+	}
+	pattern.PatternStrength = math.Min(1.0, variance/float64(len(weekAvgs))*2)
+
+	pattern.HasMonthlyPattern = pattern.PatternStrength > 0.15
+
+	cv := stdDev(weekAvgs) / overallMean
+	pattern.ConsistencyScore = math.Max(0, 1.0-cv)
+
+	return pattern
+}
+
+func analyzePeriodicity(data []TimeSeriesPoint, daily DailyPattern, weekly WeeklyPattern, monthly MonthlyPattern) PeriodicityProfile {
+	profile := PeriodicityProfile{}
+
+	profile.DailyStrength = calculateDailyStrength(daily)
+	profile.WeeklyStrength = calculateWeeklyStrength(weekly)
+	profile.MonthlyStrength = monthly.PatternStrength
+
+	profile.PeriodicityScore = (profile.DailyStrength*0.5 + profile.WeeklyStrength*0.3 + profile.MonthlyStrength*0.2)
+
+	profile.HasMultiplePeriods = (profile.DailyStrength > 0.3 && profile.WeeklyStrength > 0.2) ||
+		(profile.DailyStrength > 0.3 && profile.MonthlyStrength > 0.15) ||
+		(profile.WeeklyStrength > 0.2 && profile.MonthlyStrength > 0.15)
+
+	if profile.DailyStrength >= profile.WeeklyStrength && profile.DailyStrength >= profile.MonthlyStrength {
+		profile.DominantPeriod = "daily"
+	} else if profile.WeeklyStrength >= profile.MonthlyStrength {
+		profile.DominantPeriod = "weekly"
+	} else {
+		profile.DominantPeriod = "monthly"
+	}
+
+	if profile.PeriodicityScore < 0.1 {
+		profile.DominantPeriod = "none"
+	}
+
+	return profile
+}
+
+func calculateDailyStrength(daily DailyPattern) float64 {
+	if daily.PeakToOffPeak <= 1 {
+		return 0
+	}
+
+	strength := (daily.PeakToOffPeak - 1) / 3.0
+	strength = math.Min(1.0, strength)
+
+	if daily.PatternStrength > 0 {
+		strength = strength*0.6 + daily.PatternStrength*0.4
+	}
+
+	return strength
+}
+
+func calculateWeeklyStrength(weekly WeeklyPattern) float64 {
+	if weekly.PatternStrength > 0 {
+		return weekly.PatternStrength
+	}
+
+	if math.Abs(weekly.WeekendDrop) < 0.05 {
+		return 0
+	}
+
+	strength := math.Abs(weekly.WeekendDrop) * 2
+	return math.Min(1.0, strength)
 }
 
 func analyzeCharacteristics(data []TimeSeriesPoint, profile *LoadProfile) Characteristics {
