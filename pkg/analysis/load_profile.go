@@ -193,6 +193,23 @@ func AnalyzeLoadProfileWithWorkload(
 	tikvOpData map[string][]TimeSeriesPoint,
 	tikvLatencyData map[string][]TimeSeriesPoint,
 ) *LoadProfile {
+	return AnalyzeLoadProfileFull(clusterID, qpsData, latencyData, sqlTypeData, sqlLatencyData,
+		tikvOpData, tikvLatencyData, nil, nil, nil, nil)
+}
+
+func AnalyzeLoadProfileFull(
+	clusterID string,
+	qpsData []TimeSeriesPoint,
+	latencyData []TimeSeriesPoint,
+	sqlTypeData map[string][]TimeSeriesPoint,
+	sqlLatencyData map[string][]TimeSeriesPoint,
+	tikvOpData map[string][]TimeSeriesPoint,
+	tikvLatencyData map[string][]TimeSeriesPoint,
+	tidbInstanceQPS map[string][]TimeSeriesPoint,
+	tidbInstanceLatency map[string][]TimeSeriesPoint,
+	tikvInstanceQPS map[string][]TimeSeriesPoint,
+	tikvInstanceLatency map[string][]TimeSeriesPoint,
+) *LoadProfile {
 	if len(qpsData) == 0 {
 		return nil
 	}
@@ -227,7 +244,137 @@ func AnalyzeLoadProfileWithWorkload(
 		profile.Workload = AnalyzeWorkloadProfile(sqlTypeData, sqlLatencyData, tikvOpData, tikvLatencyData)
 	}
 
+	if len(tidbInstanceQPS) > 0 || len(tikvInstanceQPS) > 0 {
+		profile.InstanceSkew = analyzeInstanceSkew(tidbInstanceQPS, tidbInstanceLatency, tikvInstanceQPS, tikvInstanceLatency)
+	}
+
 	return profile
+}
+
+func analyzeInstanceSkew(
+	tidbQPS map[string][]TimeSeriesPoint,
+	tidbLatency map[string][]TimeSeriesPoint,
+	tikvQPS map[string][]TimeSeriesPoint,
+	tikvLatency map[string][]TimeSeriesPoint,
+) *InstanceSkewProfile {
+	profile := &InstanceSkewProfile{
+		TiDBSkew: InstanceSkewDetail{
+			QPSDistribution:     make(map[string]float64),
+			LatencyDistribution: make(map[string]float64),
+		},
+		TiKVSkew: InstanceSkewDetail{
+			QPSDistribution:     make(map[string]float64),
+			LatencyDistribution: make(map[string]float64),
+		},
+	}
+
+	if len(tidbQPS) > 0 {
+		profile.TiDBSkew = analyzeSingleComponentSkew(tidbQPS, tidbLatency)
+	}
+
+	if len(tikvQPS) > 0 {
+		profile.TiKVSkew = analyzeSingleComponentSkew(tikvQPS, tikvLatency)
+	}
+
+	profile.HasQPSImbalance = profile.TiDBSkew.QPSSkewCoefficient > 0.3 || profile.TiKVSkew.QPSSkewCoefficient > 0.3
+	profile.HasLatencyImbalance = profile.TiDBSkew.LatencySkewCoefficient > 0.3 || profile.TiKVSkew.LatencySkewCoefficient > 0.3
+
+	profile.HotInstanceCount = len(profile.TiDBSkew.HotInstances) + len(profile.TiKVSkew.HotInstances)
+
+	maxSkew := math.Max(profile.TiDBSkew.QPSSkewCoefficient, profile.TiKVSkew.QPSSkewCoefficient)
+	if maxSkew > 0.5 {
+		profile.SkewRiskLevel = "high"
+		profile.Recommendation = "Consider load balancing or scaling hot instances"
+	} else if maxSkew > 0.3 {
+		profile.SkewRiskLevel = "medium"
+		profile.Recommendation = "Monitor instance load distribution"
+	} else {
+		profile.SkewRiskLevel = "low"
+		profile.Recommendation = "Load distribution is balanced"
+	}
+
+	return profile
+}
+
+func analyzeSingleComponentSkew(
+	qpsData map[string][]TimeSeriesPoint,
+	latencyData map[string][]TimeSeriesPoint,
+) InstanceSkewDetail {
+	detail := InstanceSkewDetail{
+		QPSDistribution:     make(map[string]float64),
+		LatencyDistribution: make(map[string]float64),
+	}
+
+	detail.InstanceCount = len(qpsData)
+	if detail.InstanceCount == 0 {
+		return detail
+	}
+
+	var qpsMeans []float64
+	for instance, points := range qpsData {
+		if len(points) == 0 {
+			continue
+		}
+		vals := extractValuesFromTSP(points)
+		meanQPS := mean(vals)
+		detail.QPSDistribution[instance] = meanQPS
+		qpsMeans = append(qpsMeans, meanQPS)
+	}
+
+	if len(qpsMeans) > 0 {
+		overallMean := mean(qpsMeans)
+		if overallMean > 0 {
+			detail.QPSSkewCoefficient = stdDev(qpsMeans) / overallMean
+
+			var maxQPS, minQPS float64
+			for _, qps := range detail.QPSDistribution {
+				if maxQPS == 0 || qps > maxQPS {
+					maxQPS = qps
+				}
+				if minQPS == 0 || qps < minQPS {
+					minQPS = qps
+				}
+			}
+			detail.MaxQPSRatio = maxQPS / overallMean
+			detail.MinQPSRatio = minQPS / overallMean
+
+			for instance, qps := range detail.QPSDistribution {
+				if qps > overallMean*1.3 {
+					detail.HotInstances = append(detail.HotInstances, instance)
+				} else if qps < overallMean*0.7 {
+					detail.ColdInstances = append(detail.ColdInstances, instance)
+				}
+			}
+		}
+	}
+
+	var latMeans []float64
+	for instance, points := range latencyData {
+		if len(points) == 0 {
+			continue
+		}
+		vals := extractValuesFromTSP(points)
+		meanLat := mean(vals)
+		detail.LatencyDistribution[instance] = meanLat
+		latMeans = append(latMeans, meanLat)
+	}
+
+	if len(latMeans) > 0 {
+		overallMean := mean(latMeans)
+		if overallMean > 0 {
+			detail.LatencySkewCoefficient = stdDev(latMeans) / overallMean
+		}
+	}
+
+	return detail
+}
+
+func extractValuesFromTSP(points []TimeSeriesPoint) []float64 {
+	vals := make([]float64, len(points))
+	for i, p := range points {
+		vals[i] = p.Value
+	}
+	return vals
 }
 
 func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnalysis {
