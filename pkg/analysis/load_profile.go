@@ -479,7 +479,14 @@ func analyzeQPSProfile(data []TimeSeriesPoint) QPSProfile {
 	}
 
 	if profile.Mean > 0 {
-		profile.PeakToAvg = profile.Max / profile.Mean
+		if profile.P99 > 0 {
+			profile.PeakToAvg = profile.P99 / profile.Mean
+		} else {
+			profile.PeakToAvg = profile.Max / profile.Mean
+		}
+		if profile.PeakToAvg > 100 {
+			profile.PeakToAvg = 100
+		}
 		profile.CV = profile.StdDev / profile.Mean
 	}
 
