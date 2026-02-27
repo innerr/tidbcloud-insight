@@ -528,10 +528,14 @@ func classifyOverallPattern(profile *LoadProfile) string {
 func identifyRiskFactors(profile *LoadProfile, insights *ClusterInsights) {
 	if profile.LatencyProfile.P99Ms > 500 {
 		insights.RiskFactors = append(insights.RiskFactors, "high_latency_p99")
+	} else if profile.LatencyProfile.P99Ms > 200 {
+		insights.RiskFactors = append(insights.RiskFactors, "elevated_latency_p99")
 	}
 
 	if profile.Characteristics.StabilityClass == "highly_variable" {
 		insights.RiskFactors = append(insights.RiskFactors, "highly_variable_load")
+	} else if profile.Characteristics.StabilityClass == "variable" {
+		insights.RiskFactors = append(insights.RiskFactors, "variable_load")
 	}
 
 	if profile.InstanceSkew != nil && profile.InstanceSkew.SkewRiskLevel == "high" {
@@ -549,12 +553,29 @@ func identifyRiskFactors(profile *LoadProfile, insights *ClusterInsights) {
 	if profile.Workload != nil && profile.Workload.HotspotRisk == "high" {
 		insights.RiskFactors = append(insights.RiskFactors, "hotspot_risk")
 	}
+
+	if profile.QPSProfile.PeakToAvg > 10 {
+		insights.RiskFactors = append(insights.RiskFactors, "extreme_peak_to_avg_ratio")
+	}
+
+	if profile.Characteristics.IsGrowing && profile.TrendAnalysis.TrendAcceleration > 0.01 {
+		insights.RiskFactors = append(insights.RiskFactors, "accelerating_growth")
+	}
+
+	if profile.QPSProfile.CV > 0.8 {
+		insights.RiskFactors = append(insights.RiskFactors, "high_variability")
+	}
 }
 
 func identifyOptimizations(profile *LoadProfile, insights *ClusterInsights) {
 	if profile.QPSProfile.PeakToAvg > 3 {
 		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
 			"consider_autoscaling_for_peak_load")
+	}
+
+	if profile.QPSProfile.PeakToAvg > 5 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"burst_capacity_planning_recommended")
 	}
 
 	if profile.InstanceSkew != nil && len(profile.InstanceSkew.TiDBSkew.HotInstances) > 0 {
@@ -567,6 +588,11 @@ func identifyOptimizations(profile *LoadProfile, insights *ClusterInsights) {
 			"scheduled_scaling_based_on_daily_pattern")
 	}
 
+	if profile.Periodicity.WeeklyStrength > 0.3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"weekly_capacity_planning")
+	}
+
 	if profile.Workload != nil && profile.Workload.WriteAmplification > 3 {
 		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
 			"optimize_write_pattern_to_reduce_amplification")
@@ -575,6 +601,21 @@ func identifyOptimizations(profile *LoadProfile, insights *ClusterInsights) {
 	if profile.LatencyProfile.TailRatio > 3 {
 		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
 			"investigate_latency_tail_issues")
+	}
+
+	if profile.LatencyProfile.P99Ms > 200 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"latency_optimization_recommended")
+	}
+
+	if profile.ResourceEfficiency.EfficiencyScore < 0.4 && !profile.Characteristics.IsGrowing {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"resource_consolidation_candidate")
+	}
+
+	if profile.Characteristics.IsGrowing {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"capacity_expansion_planning")
 	}
 }
 
@@ -1609,9 +1650,9 @@ func detectChangePoints(data []TimeSeriesPoint) int {
 	}
 
 	changePoints := 0
-	windowSize := 10
-	threshold := 2.5
-	minGap := 5
+	windowSize := 15
+	threshold := 3.5
+	minGap := 20
 	lastChangePoint := -minGap - 1
 
 	for i := windowSize; i < len(vals)-windowSize; i++ {
@@ -1637,7 +1678,7 @@ func detectChangePoints(data []TimeSeriesPoint) int {
 		overallMean := mean(vals)
 		if overallMean > 0 {
 			relativeChange := math.Abs(afterMean-beforeMean) / overallMean
-			if relativeChange < 0.1 {
+			if relativeChange < 0.2 {
 				continue
 			}
 		}
