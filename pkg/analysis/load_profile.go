@@ -10,18 +10,75 @@ import (
 )
 
 type LoadProfile struct {
-	ClusterID          string              `json:"cluster_id"`
-	DurationHours      float64             `json:"duration_hours"`
-	Samples            int                 `json:"samples"`
-	QPSProfile         QPSProfile          `json:"qps_profile"`
-	LatencyProfile     LatencyProfile      `json:"latency_profile"`
-	DailyPattern       DailyPattern        `json:"daily_pattern"`
-	WeeklyPattern      WeeklyPattern       `json:"weekly_pattern"`
-	Characteristics    Characteristics     `json:"characteristics"`
-	Workload           *WorkloadProfile    `json:"workload,omitempty"`
-	Correlation        CorrelationAnalysis `json:"correlation"`
-	TrendAnalysis      TrendAnalysis       `json:"trend_analysis"`
-	ResourceEfficiency ResourceEfficiency  `json:"resource_efficiency"`
+	ClusterID          string               `json:"cluster_id"`
+	DurationHours      float64              `json:"duration_hours"`
+	Samples            int                  `json:"samples"`
+	QPSProfile         QPSProfile           `json:"qps_profile"`
+	LatencyProfile     LatencyProfile       `json:"latency_profile"`
+	DailyPattern       DailyPattern         `json:"daily_pattern"`
+	WeeklyPattern      WeeklyPattern        `json:"weekly_pattern"`
+	MonthlyPattern     MonthlyPattern       `json:"monthly_pattern"`
+	Periodicity        PeriodicityProfile   `json:"periodicity"`
+	Characteristics    Characteristics      `json:"characteristics"`
+	Workload           *WorkloadProfile     `json:"workload,omitempty"`
+	InstanceSkew       *InstanceSkewProfile `json:"instance_skew,omitempty"`
+	Correlation        CorrelationAnalysis  `json:"correlation"`
+	TrendAnalysis      TrendAnalysis        `json:"trend_analysis"`
+	ResourceEfficiency ResourceEfficiency   `json:"resource_efficiency"`
+	Insights           *ClusterInsights     `json:"insights,omitempty"`
+}
+
+type ClusterInsights struct {
+	OverallHealth             string   `json:"overall_health"`
+	RiskFactors               []string `json:"risk_factors"`
+	OptimizationOpportunities []string `json:"optimization_opportunities"`
+	PatternType               string   `json:"pattern_type"`
+	RecommendedActions        []string `json:"recommended_actions"`
+	AnomalyIndicators         []string `json:"anomaly_indicators"`
+	PerformanceScore          float64  `json:"performance_score"`
+	StabilityScore            float64  `json:"stability_score"`
+	EfficiencyScore           float64  `json:"efficiency_score"`
+}
+
+type MonthlyPattern struct {
+	HasMonthlyPattern    bool            `json:"has_monthly_pattern"`
+	PatternStrength      float64         `json:"pattern_strength"`
+	WeekOfMonthVariation map[int]float64 `json:"week_of_month_variation"`
+	FirstWeekRatio       float64         `json:"first_week_ratio"`
+	MidMonthRatio        float64         `json:"mid_month_ratio"`
+	LastWeekRatio        float64         `json:"last_week_ratio"`
+	ConsistencyScore     float64         `json:"consistency_score"`
+}
+
+type PeriodicityProfile struct {
+	DailyStrength      float64 `json:"daily_strength"`
+	WeeklyStrength     float64 `json:"weekly_strength"`
+	MonthlyStrength    float64 `json:"monthly_strength"`
+	DominantPeriod     string  `json:"dominant_period"`
+	PeriodicityScore   float64 `json:"periodicity_score"`
+	HasMultiplePeriods bool    `json:"has_multiple_periods"`
+}
+
+type InstanceSkewProfile struct {
+	TiDBSkew            InstanceSkewDetail `json:"tidb_skew"`
+	TiKVSkew            InstanceSkewDetail `json:"tikv_skew"`
+	HasQPSImbalance     bool               `json:"has_qps_imbalance"`
+	HasLatencyImbalance bool               `json:"has_latency_imbalance"`
+	SkewRiskLevel       string             `json:"skew_risk_level"`
+	HotInstanceCount    int                `json:"hot_instance_count"`
+	Recommendation      string             `json:"recommendation"`
+}
+
+type InstanceSkewDetail struct {
+	InstanceCount          int                `json:"instance_count"`
+	QPSDistribution        map[string]float64 `json:"qps_distribution"`
+	LatencyDistribution    map[string]float64 `json:"latency_distribution"`
+	QPSSkewCoefficient     float64            `json:"qps_skew_coefficient"`
+	LatencySkewCoefficient float64            `json:"latency_skew_coefficient"`
+	HotInstances           []string           `json:"hot_instances"`
+	ColdInstances          []string           `json:"cold_instances"`
+	MaxQPSRatio            float64            `json:"max_qps_ratio"`
+	MinQPSRatio            float64            `json:"min_qps_ratio"`
 }
 
 type CorrelationAnalysis struct {
@@ -149,6 +206,23 @@ func AnalyzeLoadProfileWithWorkload(
 	tikvOpData map[string][]TimeSeriesPoint,
 	tikvLatencyData map[string][]TimeSeriesPoint,
 ) *LoadProfile {
+	return AnalyzeLoadProfileFull(clusterID, qpsData, latencyData, sqlTypeData, sqlLatencyData,
+		tikvOpData, tikvLatencyData, nil, nil, nil, nil)
+}
+
+func AnalyzeLoadProfileFull(
+	clusterID string,
+	qpsData []TimeSeriesPoint,
+	latencyData []TimeSeriesPoint,
+	sqlTypeData map[string][]TimeSeriesPoint,
+	sqlLatencyData map[string][]TimeSeriesPoint,
+	tikvOpData map[string][]TimeSeriesPoint,
+	tikvLatencyData map[string][]TimeSeriesPoint,
+	tidbInstanceQPS map[string][]TimeSeriesPoint,
+	tidbInstanceLatency map[string][]TimeSeriesPoint,
+	tikvInstanceQPS map[string][]TimeSeriesPoint,
+	tikvInstanceLatency map[string][]TimeSeriesPoint,
+) *LoadProfile {
 	if len(qpsData) == 0 {
 		return nil
 	}
@@ -164,7 +238,7 @@ func AnalyzeLoadProfileWithWorkload(
 	if len(qpsData) > 0 {
 		first := qpsData[0].Timestamp
 		last := qpsData[len(qpsData)-1].Timestamp
-		profile.DurationHours = float64(last-first) / 3600
+		profile.DurationHours = float64(last-first) / 3600000
 		profile.Samples = len(qpsData)
 	}
 
@@ -172,6 +246,8 @@ func AnalyzeLoadProfileWithWorkload(
 	profile.LatencyProfile = analyzeLatencyProfile(latencyData)
 	profile.DailyPattern = analyzeDailyPattern(qpsData)
 	profile.WeeklyPattern = analyzeWeeklyPattern(qpsData)
+	profile.MonthlyPattern = analyzeMonthlyPattern(qpsData)
+	profile.Periodicity = analyzePeriodicity(qpsData, profile.DailyPattern, profile.WeeklyPattern, profile.MonthlyPattern)
 	profile.Characteristics = analyzeCharacteristics(qpsData, profile)
 	profile.Correlation = analyzeCorrelation(qpsData, latencyData)
 	profile.TrendAnalysis = analyzeTrend(qpsData)
@@ -181,7 +257,388 @@ func AnalyzeLoadProfileWithWorkload(
 		profile.Workload = AnalyzeWorkloadProfile(sqlTypeData, sqlLatencyData, tikvOpData, tikvLatencyData)
 	}
 
+	if len(tidbInstanceQPS) > 0 || len(tikvInstanceQPS) > 0 {
+		profile.InstanceSkew = analyzeInstanceSkew(tidbInstanceQPS, tidbInstanceLatency, tikvInstanceQPS, tikvInstanceLatency)
+	}
+
+	profile.Insights = generateClusterInsights(profile)
+
 	return profile
+}
+
+func analyzeInstanceSkew(
+	tidbQPS map[string][]TimeSeriesPoint,
+	tidbLatency map[string][]TimeSeriesPoint,
+	tikvQPS map[string][]TimeSeriesPoint,
+	tikvLatency map[string][]TimeSeriesPoint,
+) *InstanceSkewProfile {
+	profile := &InstanceSkewProfile{
+		TiDBSkew: InstanceSkewDetail{
+			QPSDistribution:     make(map[string]float64),
+			LatencyDistribution: make(map[string]float64),
+		},
+		TiKVSkew: InstanceSkewDetail{
+			QPSDistribution:     make(map[string]float64),
+			LatencyDistribution: make(map[string]float64),
+		},
+	}
+
+	if len(tidbQPS) > 0 {
+		profile.TiDBSkew = analyzeSingleComponentSkew(tidbQPS, tidbLatency)
+	}
+
+	if len(tikvQPS) > 0 {
+		profile.TiKVSkew = analyzeSingleComponentSkew(tikvQPS, tikvLatency)
+	}
+
+	profile.HasQPSImbalance = profile.TiDBSkew.QPSSkewCoefficient > 0.3 || profile.TiKVSkew.QPSSkewCoefficient > 0.3
+	profile.HasLatencyImbalance = profile.TiDBSkew.LatencySkewCoefficient > 0.3 || profile.TiKVSkew.LatencySkewCoefficient > 0.3
+
+	profile.HotInstanceCount = len(profile.TiDBSkew.HotInstances) + len(profile.TiKVSkew.HotInstances)
+
+	maxSkew := math.Max(profile.TiDBSkew.QPSSkewCoefficient, profile.TiKVSkew.QPSSkewCoefficient)
+	if maxSkew > 0.5 {
+		profile.SkewRiskLevel = "high"
+		profile.Recommendation = "Consider load balancing or scaling hot instances"
+	} else if maxSkew > 0.3 {
+		profile.SkewRiskLevel = "medium"
+		profile.Recommendation = "Monitor instance load distribution"
+	} else {
+		profile.SkewRiskLevel = "low"
+		profile.Recommendation = "Load distribution is balanced"
+	}
+
+	return profile
+}
+
+func analyzeSingleComponentSkew(
+	qpsData map[string][]TimeSeriesPoint,
+	latencyData map[string][]TimeSeriesPoint,
+) InstanceSkewDetail {
+	detail := InstanceSkewDetail{
+		QPSDistribution:     make(map[string]float64),
+		LatencyDistribution: make(map[string]float64),
+	}
+
+	detail.InstanceCount = len(qpsData)
+	if detail.InstanceCount == 0 {
+		return detail
+	}
+
+	var qpsMeans []float64
+	for instance, points := range qpsData {
+		if len(points) == 0 {
+			continue
+		}
+		vals := extractValuesFromTSP(points)
+		meanQPS := mean(vals)
+		detail.QPSDistribution[instance] = meanQPS
+		qpsMeans = append(qpsMeans, meanQPS)
+	}
+
+	if len(qpsMeans) > 0 {
+		overallMean := mean(qpsMeans)
+		if overallMean > 0 {
+			detail.QPSSkewCoefficient = stdDev(qpsMeans) / overallMean
+
+			var maxQPS, minQPS float64
+			for _, qps := range detail.QPSDistribution {
+				if maxQPS == 0 || qps > maxQPS {
+					maxQPS = qps
+				}
+				if minQPS == 0 || qps < minQPS {
+					minQPS = qps
+				}
+			}
+			detail.MaxQPSRatio = maxQPS / overallMean
+			detail.MinQPSRatio = minQPS / overallMean
+
+			for instance, qps := range detail.QPSDistribution {
+				if qps > overallMean*1.3 {
+					detail.HotInstances = append(detail.HotInstances, instance)
+				} else if qps < overallMean*0.7 {
+					detail.ColdInstances = append(detail.ColdInstances, instance)
+				}
+			}
+		}
+	}
+
+	var latMeans []float64
+	for instance, points := range latencyData {
+		if len(points) == 0 {
+			continue
+		}
+		vals := extractValuesFromTSP(points)
+		meanLat := mean(vals)
+		detail.LatencyDistribution[instance] = meanLat
+		latMeans = append(latMeans, meanLat)
+	}
+
+	if len(latMeans) > 0 {
+		overallMean := mean(latMeans)
+		if overallMean > 0 {
+			detail.LatencySkewCoefficient = stdDev(latMeans) / overallMean
+		}
+	}
+
+	return detail
+}
+
+func extractValuesFromTSP(points []TimeSeriesPoint) []float64 {
+	vals := make([]float64, len(points))
+	for i, p := range points {
+		vals[i] = p.Value
+	}
+	return vals
+}
+
+func generateClusterInsights(profile *LoadProfile) *ClusterInsights {
+	insights := &ClusterInsights{
+		RiskFactors:               []string{},
+		OptimizationOpportunities: []string{},
+		RecommendedActions:        []string{},
+		AnomalyIndicators:         []string{},
+	}
+
+	insights.PerformanceScore = calculatePerformanceScore(profile)
+	insights.StabilityScore = calculateStabilityScore(profile)
+	insights.EfficiencyScore = calculateEfficiencyScore(profile)
+
+	insights.PatternType = classifyOverallPattern(profile)
+
+	identifyRiskFactors(profile, insights)
+	identifyOptimizations(profile, insights)
+	identifyAnomalies(profile, insights)
+
+	overallScore := (insights.PerformanceScore + insights.StabilityScore + insights.EfficiencyScore) / 3
+	if overallScore >= 0.7 {
+		insights.OverallHealth = "healthy"
+	} else if overallScore >= 0.5 {
+		insights.OverallHealth = "moderate"
+	} else {
+		insights.OverallHealth = "needs_attention"
+	}
+
+	if len(insights.RiskFactors) > 2 {
+		insights.OverallHealth = "needs_attention"
+	}
+
+	return insights
+}
+
+func calculatePerformanceScore(profile *LoadProfile) float64 {
+	score := 1.0
+
+	if profile.LatencyProfile.P99Ms > 100 {
+		score -= 0.2
+	}
+	if profile.LatencyProfile.P99Ms > 500 {
+		score -= 0.3
+	}
+	if profile.LatencyProfile.CV > 0.5 {
+		score -= 0.1
+	}
+	if profile.QPSProfile.CV > 0.7 {
+		score -= 0.1
+	}
+
+	return math.Max(0, math.Min(1, score))
+}
+
+func calculateStabilityScore(profile *LoadProfile) float64 {
+	score := 1.0
+
+	stabilityClass := profile.Characteristics.StabilityClass
+	switch stabilityClass {
+	case "highly_variable":
+		score -= 0.4
+	case "variable":
+		score -= 0.2
+	case "moderate":
+		score -= 0.1
+	}
+
+	if profile.Characteristics.ChangePoints > 5 {
+		changePointPenalty := math.Min(0.3, 0.05*float64(profile.Characteristics.ChangePoints-5))
+		score -= changePointPenalty
+	}
+
+	if profile.Characteristics.NoiseLevel > 0.5 {
+		score -= 0.1
+	}
+
+	if profile.Periodicity.PeriodicityScore > 0.5 {
+		score += 0.15
+	} else if profile.Periodicity.PeriodicityScore > 0.3 {
+		score += 0.1
+	}
+
+	return math.Max(0, math.Min(1, score))
+}
+
+func calculateEfficiencyScore(profile *LoadProfile) float64 {
+	score := 1.0
+
+	if profile.InstanceSkew != nil && profile.InstanceSkew.SkewRiskLevel == "high" {
+		score -= 0.2
+	}
+
+	if profile.QPSProfile.PeakToAvg > 5 {
+		score -= 0.1
+	}
+	if profile.QPSProfile.PeakToAvg > 10 {
+		score -= 0.2
+	}
+
+	if profile.ResourceEfficiency.EfficiencyScore < 0.5 {
+		score -= 0.1
+	}
+
+	return math.Max(0, math.Min(1, score))
+}
+
+func classifyOverallPattern(profile *LoadProfile) string {
+	if profile.Periodicity.DominantPeriod == "none" {
+		if profile.Characteristics.Burstiness > 0.5 {
+			return "unpredictable"
+		}
+		return "flat"
+	}
+
+	var patterns []string
+	if profile.Periodicity.DailyStrength > 0.3 {
+		patterns = append(patterns, "daily")
+	}
+	if profile.Periodicity.WeeklyStrength > 0.2 {
+		patterns = append(patterns, "weekly")
+	}
+	if profile.Periodicity.MonthlyStrength > 0.15 {
+		patterns = append(patterns, "monthly")
+	}
+
+	if len(patterns) >= 2 {
+		return "multi_periodic"
+	} else if len(patterns) == 1 {
+		return patterns[0] + "_periodic"
+	}
+
+	return "mixed"
+}
+
+func identifyRiskFactors(profile *LoadProfile, insights *ClusterInsights) {
+	if profile.LatencyProfile.P99Ms > 500 {
+		insights.RiskFactors = append(insights.RiskFactors, "high_latency_p99")
+	} else if profile.LatencyProfile.P99Ms > 200 {
+		insights.RiskFactors = append(insights.RiskFactors, "elevated_latency_p99")
+	}
+
+	if profile.Characteristics.StabilityClass == "highly_variable" {
+		insights.RiskFactors = append(insights.RiskFactors, "highly_variable_load")
+	} else if profile.Characteristics.StabilityClass == "variable" {
+		insights.RiskFactors = append(insights.RiskFactors, "variable_load")
+	}
+
+	if profile.InstanceSkew != nil && profile.InstanceSkew.SkewRiskLevel == "high" {
+		insights.RiskFactors = append(insights.RiskFactors, "instance_imbalance")
+	}
+
+	if profile.Characteristics.ChangePoints > 5 {
+		insights.RiskFactors = append(insights.RiskFactors, "frequent_regime_changes")
+	}
+
+	if profile.Characteristics.AnomalyScore > 0.5 {
+		insights.RiskFactors = append(insights.RiskFactors, "anomaly_prone")
+	}
+
+	if profile.Workload != nil && profile.Workload.HotspotRisk == "high" {
+		insights.RiskFactors = append(insights.RiskFactors, "hotspot_risk")
+	}
+
+	if profile.QPSProfile.PeakToAvg > 10 {
+		insights.RiskFactors = append(insights.RiskFactors, "extreme_peak_to_avg_ratio")
+	}
+
+	if profile.Characteristics.IsGrowing && profile.TrendAnalysis.TrendAcceleration > 0.01 {
+		insights.RiskFactors = append(insights.RiskFactors, "accelerating_growth")
+	}
+
+	if profile.QPSProfile.CV > 0.8 {
+		insights.RiskFactors = append(insights.RiskFactors, "high_variability")
+	}
+}
+
+func identifyOptimizations(profile *LoadProfile, insights *ClusterInsights) {
+	if profile.QPSProfile.PeakToAvg > 3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"consider_autoscaling_for_peak_load")
+	}
+
+	if profile.QPSProfile.PeakToAvg > 5 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"burst_capacity_planning_recommended")
+	}
+
+	if profile.InstanceSkew != nil && len(profile.InstanceSkew.TiDBSkew.HotInstances) > 0 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"balance_load_across_instances")
+	}
+
+	if profile.Periodicity.DailyStrength > 0.5 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"scheduled_scaling_based_on_daily_pattern")
+	}
+
+	if profile.Periodicity.WeeklyStrength > 0.3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"weekly_capacity_planning")
+	}
+
+	if profile.Workload != nil && profile.Workload.WriteAmplification > 3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"optimize_write_pattern_to_reduce_amplification")
+	}
+
+	if profile.LatencyProfile.TailRatio > 3 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"investigate_latency_tail_issues")
+	}
+
+	if profile.LatencyProfile.P99Ms > 200 {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"latency_optimization_recommended")
+	}
+
+	if profile.ResourceEfficiency.EfficiencyScore < 0.4 && !profile.Characteristics.IsGrowing {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"resource_consolidation_candidate")
+	}
+
+	if profile.Characteristics.IsGrowing {
+		insights.OptimizationOpportunities = append(insights.OptimizationOpportunities,
+			"capacity_expansion_planning")
+	}
+}
+
+func identifyAnomalies(profile *LoadProfile, insights *ClusterInsights) {
+	if profile.QPSProfile.CV > 1.0 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "extreme_qps_variability")
+	}
+
+	if profile.LatencyProfile.SpikeRatio > 0.3 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "latency_spikes_detected")
+	}
+
+	if profile.Characteristics.AnomalyScore > 0.7 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "high_anomaly_score")
+	}
+
+	if profile.WeeklyPattern.WeekendDrop < -0.3 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "significant_weekend_drop")
+	}
+
+	if profile.MonthlyPattern.HasMonthlyPattern && profile.MonthlyPattern.PatternStrength > 0.3 {
+		insights.AnomalyIndicators = append(insights.AnomalyIndicators, "monthly_cycle_detected")
+	}
 }
 
 func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnalysis {
@@ -210,7 +667,7 @@ func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnaly
 	}
 
 	if len(commonQPS) >= 10 {
-		corr.QPSLatencyCorr = PearsonCorrelation(commonQPS, commonLat)
+		corr.QPSLatencyCorr = robustCorrelation(commonQPS, commonLat)
 	}
 
 	if len(commonQPS) >= 20 {
@@ -219,7 +676,7 @@ func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnaly
 			laggedQPS = append(laggedQPS, commonQPS[i-1])
 			laggedLat = append(laggedLat, commonLat[i])
 		}
-		corr.QPSLatencyLagged = PearsonCorrelation(laggedQPS, laggedLat)
+		corr.QPSLatencyLagged = robustCorrelation(laggedQPS, laggedLat)
 	}
 
 	absCorr := math.Abs(corr.QPSLatencyCorr)
@@ -243,6 +700,65 @@ func analyzeCorrelation(qpsData, latencyData []TimeSeriesPoint) CorrelationAnaly
 	}
 
 	return corr
+}
+
+func robustCorrelation(x, y []float64) float64 {
+	if len(x) != len(y) || len(x) < 5 {
+		return 0
+	}
+
+	sortedX := make([]float64, len(x))
+	sortedY := make([]float64, len(y))
+	copy(sortedX, x)
+	copy(sortedY, y)
+	sort.Float64s(sortedX)
+	sort.Float64s(sortedY)
+
+	q1X := percentile(sortedX, 0.25)
+	q3X := percentile(sortedX, 0.75)
+	q1Y := percentile(sortedY, 0.25)
+	q3Y := percentile(sortedY, 0.75)
+
+	iqrX := q3X - q1X
+	iqrY := q3Y - q1Y
+
+	var filteredX, filteredY []float64
+	for i := 0; i < len(x); i++ {
+		if x[i] >= q1X-1.5*iqrX && x[i] <= q3X+1.5*iqrX &&
+			y[i] >= q1Y-1.5*iqrY && y[i] <= q3Y+1.5*iqrY {
+			filteredX = append(filteredX, x[i])
+			filteredY = append(filteredY, y[i])
+		}
+	}
+
+	if len(filteredX) < 5 {
+		return PearsonCorrelation(x, y)
+	}
+
+	n := len(filteredX)
+	sumX, sumY := 0.0, 0.0
+	for i := 0; i < n; i++ {
+		sumX += filteredX[i]
+		sumY += filteredY[i]
+	}
+	meanX := sumX / float64(n)
+	meanY := sumY / float64(n)
+
+	cov := 0.0
+	stdX, stdY := 0.0, 0.0
+	for i := 0; i < n; i++ {
+		cov += (filteredX[i] - meanX) * (filteredY[i] - meanY)
+		stdX += (filteredX[i] - meanX) * (filteredX[i] - meanX)
+		stdY += (filteredY[i] - meanY) * (filteredY[i] - meanY)
+	}
+	stdX = math.Sqrt(stdX)
+	stdY = math.Sqrt(stdY)
+
+	if stdX == 0 || stdY == 0 {
+		return 0
+	}
+
+	return cov / (stdX * stdY)
 }
 
 func analyzeTrend(data []TimeSeriesPoint) TrendAnalysis {
@@ -340,17 +856,28 @@ func analyzeResourceEfficiency(profile *LoadProfile) ResourceEfficiency {
 	qps := profile.QPSProfile
 	char := profile.Characteristics
 
-	if qps.Mean > 0 && qps.StdDev > 0 {
-		stableQPS := qps.Mean - qps.StdDev
-		eff.QPSEfficiency = stableQPS / qps.Max
+	if qps.Max > 0 {
+		eff.QPSEfficiency = qps.Mean / qps.Max
+		if eff.QPSEfficiency > 1 {
+			eff.QPSEfficiency = 1
+		}
 	}
 
-	eff.PeakUtilization = math.Min(1.0, qps.PeakToAvg/3)
+	peakUtil := 0.0
+	if qps.PeakToAvg > 1 {
+		peakUtil = (qps.PeakToAvg - 1) / 4.0
+	}
+	eff.PeakUtilization = math.Min(1.0, peakUtil)
 
-	avgUtil := 1.0 - qps.CV
-	eff.AvgUtilization = math.Max(0, avgUtil)
+	eff.AvgUtilization = math.Max(0, 1.0-qps.CV)
 
-	eff.EfficiencyScore = (eff.QPSEfficiency*0.4 + (1-eff.PeakUtilization)*0.3 + eff.AvgUtilization*0.3)
+	periodicityBonus := 0.0
+	if profile.Periodicity.PeriodicityScore > 0.3 {
+		periodicityBonus = 0.1
+	}
+
+	eff.EfficiencyScore = (eff.QPSEfficiency*0.3 + (1-eff.PeakUtilization)*0.25 + eff.AvgUtilization*0.25 + periodicityBonus)
+	eff.EfficiencyScore = math.Min(1.0, eff.EfficiencyScore)
 
 	if eff.EfficiencyScore > 0.7 {
 		eff.Recommendation = "well_optimized"
@@ -379,24 +906,59 @@ func analyzeQPSProfile(data []TimeSeriesPoint) QPSProfile {
 	copy(sorted, vals)
 	sort.Float64s(sorted)
 
-	profile := QPSProfile{
-		Min:    sorted[0],
-		Max:    sorted[len(sorted)-1],
-		Mean:   mean(vals),
-		Median: median(sorted),
-		StdDev: stdDev(vals),
+	var filteredVals []float64
+	if len(sorted) >= 10 {
+		q1 := percentile(sorted, 0.25)
+		q3 := percentile(sorted, 0.75)
+		iqr := q3 - q1
+		lowerBound := q1 - 3*iqr
+		upperBound := q3 + 3*iqr
+
+		for _, v := range vals {
+			if v >= lowerBound && v <= upperBound {
+				filteredVals = append(filteredVals, v)
+			}
+		}
+
+		if len(filteredVals) < len(vals)/2 {
+			filteredVals = vals
+		}
+	} else {
+		filteredVals = vals
 	}
 
-	if len(sorted) >= 10 {
-		profile.P10 = percentile(sorted, 0.10)
-		profile.P90 = percentile(sorted, 0.90)
-		profile.P99 = percentile(sorted, 0.99)
-		profile.IQR = percentile(sorted, 0.75) - percentile(sorted, 0.25)
+	filteredSorted := make([]float64, len(filteredVals))
+	copy(filteredSorted, filteredVals)
+	sort.Float64s(filteredSorted)
+
+	profile := QPSProfile{
+		Min:    filteredSorted[0],
+		Max:    filteredSorted[len(filteredSorted)-1],
+		Mean:   mean(filteredVals),
+		Median: median(filteredSorted),
+		StdDev: stdDev(filteredVals),
+	}
+
+	if len(filteredSorted) >= 10 {
+		profile.P10 = percentile(filteredSorted, 0.10)
+		profile.P90 = percentile(filteredSorted, 0.90)
+		profile.P99 = percentile(filteredSorted, 0.99)
+		profile.IQR = percentile(filteredSorted, 0.75) - percentile(filteredSorted, 0.25)
 	}
 
 	if profile.Mean > 0 {
-		profile.PeakToAvg = profile.Max / profile.Mean
+		if profile.P99 > 0 {
+			profile.PeakToAvg = profile.P99 / profile.Mean
+		} else {
+			profile.PeakToAvg = profile.Max / profile.Mean
+		}
+		if profile.PeakToAvg > 100 {
+			profile.PeakToAvg = 100
+		}
 		profile.CV = profile.StdDev / profile.Mean
+		if profile.CV > 10 {
+			profile.CV = 10
+		}
 	}
 
 	profile.Skewness = skewness(vals)
@@ -469,7 +1031,7 @@ func analyzeDailyPattern(data []TimeSeriesPoint) DailyPattern {
 
 	hourlyData := make(map[int][]float64)
 	for _, p := range data {
-		hour := time.Unix(p.Timestamp, 0).Hour()
+		hour := time.Unix(p.Timestamp/1000, 0).Hour()
 		hourlyData[hour] = append(hourlyData[hour], p.Value)
 	}
 
@@ -492,12 +1054,21 @@ func analyzeDailyPattern(data []TimeSeriesPoint) DailyPattern {
 
 	overallMedian := median(allAvgs)
 	overallMean := mean(allAvgs)
+	overallStd := stdDev(allAvgs)
 
 	var peakAvg, offPeakAvg float64
 	var peakHours, offPeakHours []int
 
-	peakThreshold := overallMedian * 1.3
-	offPeakThreshold := overallMedian * 0.7
+	dynamicThreshold := overallStd * 0.5
+	peakThreshold := overallMedian + dynamicThreshold
+	offPeakThreshold := overallMedian - dynamicThreshold
+
+	if peakThreshold < overallMedian*1.2 {
+		peakThreshold = overallMedian * 1.2
+	}
+	if offPeakThreshold > overallMedian*0.8 {
+		offPeakThreshold = overallMedian * 0.8
+	}
 
 	for hour, avg := range pattern.HourlyAvg {
 		if avg > peakThreshold {
@@ -638,7 +1209,7 @@ func analyzeWeeklyPattern(data []TimeSeriesPoint) WeeklyPattern {
 	var weekdayCount, weekendCount int
 
 	for _, p := range data {
-		t := time.Unix(p.Timestamp, 0)
+		t := time.Unix(p.Timestamp/1000, 0)
 		dayKey := t.Format("2006-01-02")
 		dailyData[dayKey] = append(dailyData[dayKey], p.Value)
 
@@ -726,6 +1297,131 @@ func calculateWeeklyConsistency(dayOfWeekData map[int][]float64) float64 {
 	return math.Max(0, 1.0-avgCV)
 }
 
+func analyzeMonthlyPattern(data []TimeSeriesPoint) MonthlyPattern {
+	pattern := MonthlyPattern{
+		WeekOfMonthVariation: make(map[int]float64),
+	}
+
+	if len(data) < 672 {
+		return pattern
+	}
+
+	weekData := make(map[int][]float64)
+	for _, p := range data {
+		t := time.Unix(p.Timestamp/1000, 0)
+		day := t.Day()
+		weekOfMonth := (day - 1) / 7
+		if weekOfMonth > 4 {
+			weekOfMonth = 4
+		}
+		weekData[weekOfMonth] = append(weekData[weekOfMonth], p.Value)
+	}
+
+	if len(weekData) < 3 {
+		return pattern
+	}
+
+	for week, vals := range weekData {
+		pattern.WeekOfMonthVariation[week] = mean(vals)
+	}
+
+	var weekAvgs []float64
+	for week := 0; week <= 4; week++ {
+		if avg, ok := pattern.WeekOfMonthVariation[week]; ok {
+			weekAvgs = append(weekAvgs, avg)
+		}
+	}
+
+	if len(weekAvgs) < 3 {
+		return pattern
+	}
+
+	overallMean := mean(weekAvgs)
+	if overallMean == 0 {
+		return pattern
+	}
+
+	if firstWeek, ok := pattern.WeekOfMonthVariation[0]; ok {
+		pattern.FirstWeekRatio = firstWeek / overallMean
+	}
+	if midWeek, ok := pattern.WeekOfMonthVariation[2]; ok {
+		pattern.MidMonthRatio = midWeek / overallMean
+	}
+	if lastWeek, ok := pattern.WeekOfMonthVariation[4]; ok {
+		pattern.LastWeekRatio = lastWeek / overallMean
+	}
+
+	var variance float64
+	for _, avg := range weekAvgs {
+		diff := (avg - overallMean) / overallMean
+		variance += diff * diff
+	}
+	pattern.PatternStrength = math.Min(1.0, variance/float64(len(weekAvgs))*2)
+
+	pattern.HasMonthlyPattern = pattern.PatternStrength > 0.15
+
+	cv := stdDev(weekAvgs) / overallMean
+	pattern.ConsistencyScore = math.Max(0, 1.0-cv)
+
+	return pattern
+}
+
+func analyzePeriodicity(data []TimeSeriesPoint, daily DailyPattern, weekly WeeklyPattern, monthly MonthlyPattern) PeriodicityProfile {
+	profile := PeriodicityProfile{}
+
+	profile.DailyStrength = calculateDailyStrength(daily)
+	profile.WeeklyStrength = calculateWeeklyStrength(weekly)
+	profile.MonthlyStrength = monthly.PatternStrength
+
+	profile.PeriodicityScore = (profile.DailyStrength*0.5 + profile.WeeklyStrength*0.3 + profile.MonthlyStrength*0.2)
+
+	profile.HasMultiplePeriods = (profile.DailyStrength > 0.3 && profile.WeeklyStrength > 0.2) ||
+		(profile.DailyStrength > 0.3 && profile.MonthlyStrength > 0.15) ||
+		(profile.WeeklyStrength > 0.2 && profile.MonthlyStrength > 0.15)
+
+	if profile.DailyStrength >= profile.WeeklyStrength && profile.DailyStrength >= profile.MonthlyStrength {
+		profile.DominantPeriod = "daily"
+	} else if profile.WeeklyStrength >= profile.MonthlyStrength {
+		profile.DominantPeriod = "weekly"
+	} else {
+		profile.DominantPeriod = "monthly"
+	}
+
+	if profile.PeriodicityScore < 0.1 {
+		profile.DominantPeriod = "none"
+	}
+
+	return profile
+}
+
+func calculateDailyStrength(daily DailyPattern) float64 {
+	if daily.PeakToOffPeak <= 1 {
+		return 0
+	}
+
+	strength := (daily.PeakToOffPeak - 1) / 3.0
+	strength = math.Min(1.0, strength)
+
+	if daily.PatternStrength > 0 {
+		strength = strength*0.6 + daily.PatternStrength*0.4
+	}
+
+	return strength
+}
+
+func calculateWeeklyStrength(weekly WeeklyPattern) float64 {
+	if weekly.PatternStrength > 0 {
+		return weekly.PatternStrength
+	}
+
+	if math.Abs(weekly.WeekendDrop) < 0.05 {
+		return 0
+	}
+
+	strength := math.Abs(weekly.WeekendDrop) * 2
+	return math.Min(1.0, strength)
+}
+
 func analyzeCharacteristics(data []TimeSeriesPoint, profile *LoadProfile) Characteristics {
 	if len(data) < 10 {
 		return Characteristics{}
@@ -749,7 +1445,7 @@ func analyzeCharacteristics(data []TimeSeriesPoint, profile *LoadProfile) Charac
 	char.ChangePoints = detectChangePoints(data)
 	char.AnomalyScore = calculateAnomalyScore(vals, profile)
 
-	char.StabilityClass = classifyStability(profile.QPSProfile.CV)
+	char.StabilityClass = classifyStabilityMulti(profile.QPSProfile.CV, char.TrendStrength, char.Autocorrelation, char.ChangePoints, profile.Periodicity.PeriodicityScore)
 	char.LoadClass = classifyLoad(profile.QPSProfile.Mean)
 	char.TrafficType = classifyTraffic(profile)
 
@@ -773,7 +1469,7 @@ func calculateSeasonality(data []TimeSeriesPoint) float64 {
 
 	hourlyAvg := make(map[int][]float64)
 	for _, p := range data {
-		hour := time.Unix(p.Timestamp, 0).Hour()
+		hour := time.Unix(p.Timestamp/1000, 0).Hour()
 		hourlyAvg[hour] = append(hourlyAvg[hour], p.Value)
 	}
 
@@ -781,30 +1477,51 @@ func calculateSeasonality(data []TimeSeriesPoint) float64 {
 		return 0
 	}
 
-	var hourlyMeans []float64
+	hourlyMeansArr := make([]float64, 24)
 	for i := 0; i < 24; i++ {
 		if vals, ok := hourlyAvg[i]; ok {
-			hourlyMeans = append(hourlyMeans, mean(vals))
+			hourlyMeansArr[i] = mean(vals)
 		}
 	}
 
-	if len(hourlyMeans) < 12 {
-		return 0
-	}
-
-	overallMean := mean(hourlyMeans)
+	overallMean := mean(hourlyMeansArr)
 	if overallMean == 0 {
 		return 0
 	}
 
 	var variance float64
-	for _, m := range hourlyMeans {
+	for _, m := range hourlyMeansArr {
 		diff := (m - overallMean) / overallMean
 		variance += diff * diff
 	}
-	variance /= float64(len(hourlyMeans))
+	variance /= 24.0
 
-	return math.Min(1.0, variance*2)
+	peakHour := 0
+	troughHour := 0
+	maxVal := hourlyMeansArr[0]
+	minVal := hourlyMeansArr[0]
+	for i, v := range hourlyMeansArr {
+		if v > maxVal {
+			maxVal = v
+			peakHour = i
+		}
+		if v < minVal {
+			minVal = v
+			troughHour = i
+		}
+	}
+
+	amplitude := 0.0
+	if minVal > 0 {
+		amplitude = (maxVal - minVal) / minVal
+	}
+
+	_ = peakHour
+	_ = troughHour
+
+	seasonalityScore := math.Min(1.0, variance*2)*0.6 + math.Min(1.0, amplitude/3)*0.4
+
+	return seasonalityScore
 }
 
 func calculateTrendStrength(data []TimeSeriesPoint, slope float64) float64 {
@@ -817,12 +1534,41 @@ func calculateTrendStrength(data []TimeSeriesPoint, slope float64) float64 {
 		return 0
 	}
 
-	absSlope := math.Abs(slope)
-	return math.Min(1.0, absSlope*math.Sqrt(n)*10)
+	vals := make([]float64, len(data))
+	for i, p := range data {
+		vals[i] = p.Value
+	}
+
+	detrended := make([]float64, len(vals))
+	avgVal := mean(vals)
+	for i, v := range vals {
+		detrended[i] = v - avgVal
+	}
+
+	var sumSquaredResiduals float64
+	for _, d := range detrended {
+		sumSquaredResiduals += d * d
+	}
+
+	var sumSquaredTotal float64
+	for _, v := range vals {
+		diff := v - avgVal
+		sumSquaredTotal += diff * diff
+	}
+
+	var r2 float64
+	if sumSquaredTotal > 0 {
+		r2 = 1 - sumSquaredResiduals/sumSquaredTotal
+	}
+
+	trendComponent := math.Min(1.0, math.Abs(slope)*math.Sqrt(n)*5)
+	consistencyComponent := math.Max(0, r2)
+
+	return trendComponent*0.5 + consistencyComponent*0.5
 }
 
 func calculateNoiseLevel(vals []float64) float64 {
-	if len(vals) < 3 {
+	if len(vals) < 5 {
 		return 0
 	}
 
@@ -831,6 +1577,11 @@ func calculateNoiseLevel(vals []float64) float64 {
 		diffs[i] = math.Abs(vals[i+1] - vals[i])
 	}
 
+	sortedVals := make([]float64, len(vals))
+	copy(sortedVals, vals)
+	sort.Float64s(sortedVals)
+	iqr := percentile(sortedVals, 0.75) - percentile(sortedVals, 0.25)
+
 	avgDiff := mean(diffs)
 	avgVal := mean(vals)
 
@@ -838,7 +1589,14 @@ func calculateNoiseLevel(vals []float64) float64 {
 		return 0
 	}
 
-	return math.Min(1.0, avgDiff/avgVal)
+	noiseFromDiffs := math.Min(1.0, avgDiff/avgVal)
+
+	noiseFromIQR := 0.0
+	if avgVal > 0 {
+		noiseFromIQR = math.Min(1.0, iqr/avgVal)
+	}
+
+	return (noiseFromDiffs + noiseFromIQR) / 2
 }
 
 func calculateAutocorrelation(vals []float64) float64 {
@@ -852,10 +1610,7 @@ func calculateAutocorrelation(vals []float64) float64 {
 		return 0
 	}
 
-	var numerator, denominator float64
-	for i := 1; i < n; i++ {
-		numerator += (vals[i] - avg) * (vals[i-1] - avg)
-	}
+	var denominator float64
 	for i := 0; i < n; i++ {
 		denominator += (vals[i] - avg) * (vals[i] - avg)
 	}
@@ -864,11 +1619,28 @@ func calculateAutocorrelation(vals []float64) float64 {
 		return 0
 	}
 
-	return numerator / denominator
+	var autocorr1, autocorr2, autocorr3 float64
+	for i := 1; i < n; i++ {
+		autocorr1 += (vals[i] - avg) * (vals[i-1] - avg)
+	}
+	for i := 2; i < n; i++ {
+		autocorr2 += (vals[i] - avg) * (vals[i-2] - avg)
+	}
+	for i := 3; i < n; i++ {
+		autocorr3 += (vals[i] - avg) * (vals[i-3] - avg)
+	}
+
+	autocorr1 /= denominator
+	autocorr2 /= denominator
+	autocorr3 /= denominator
+
+	weightedAutocorr := (autocorr1*0.5 + autocorr2*0.3 + autocorr3*0.2)
+
+	return math.Max(-1, math.Min(1, weightedAutocorr))
 }
 
 func detectChangePoints(data []TimeSeriesPoint) int {
-	if len(data) < 20 {
+	if len(data) < 30 {
 		return 0
 	}
 
@@ -878,10 +1650,16 @@ func detectChangePoints(data []TimeSeriesPoint) int {
 	}
 
 	changePoints := 0
-	windowSize := 10
-	threshold := 2.0
+	windowSize := 15
+	threshold := 3.5
+	minGap := 20
+	lastChangePoint := -minGap - 1
 
 	for i := windowSize; i < len(vals)-windowSize; i++ {
+		if i-lastChangePoint < minGap {
+			continue
+		}
+
 		before := vals[i-windowSize : i]
 		after := vals[i : i+windowSize]
 
@@ -890,14 +1668,24 @@ func detectChangePoints(data []TimeSeriesPoint) int {
 		beforeStd := stdDev(before)
 		afterStd := stdDev(after)
 
-		combinedStd := math.Sqrt((beforeStd*beforeStd + afterStd*afterStd) / 2)
-		if combinedStd == 0 {
+		pooledStd := math.Sqrt((beforeStd*beforeStd + afterStd*afterStd) / 2)
+		if pooledStd == 0 {
 			continue
 		}
 
-		diff := math.Abs(afterMean-beforeMean) / combinedStd
-		if diff > threshold {
+		tStat := math.Abs(afterMean-beforeMean) / pooledStd / math.Sqrt(2.0/float64(windowSize))
+
+		overallMean := mean(vals)
+		if overallMean > 0 {
+			relativeChange := math.Abs(afterMean-beforeMean) / overallMean
+			if relativeChange < 0.2 {
+				continue
+			}
+		}
+
+		if tStat > threshold {
 			changePoints++
+			lastChangePoint = i
 		}
 	}
 
@@ -914,17 +1702,32 @@ func calculateAnomalyScore(vals []float64, profile *LoadProfile) float64 {
 
 	score := 0.0
 
-	if qps.CV > 0.5 {
-		score += 0.3
+	if qps.CV > 0.6 {
+		score += 0.25
+	} else if qps.CV > 0.4 {
+		score += 0.15
 	}
-	if qps.OutlierRatio > 0.1 {
-		score += 0.2
+
+	if qps.OutlierRatio > 0.15 {
+		score += 0.20
+	} else if qps.OutlierRatio > 0.08 {
+		score += 0.10
 	}
-	if lat.P99toP50 > 5 {
-		score += 0.3
+
+	if lat.P99toP50 > 8 {
+		score += 0.25
+	} else if lat.P99toP50 > 5 {
+		score += 0.15
 	}
-	if lat.CV > 0.5 {
-		score += 0.2
+
+	if lat.CV > 0.6 {
+		score += 0.20
+	} else if lat.CV > 0.4 {
+		score += 0.10
+	}
+
+	if profile.Characteristics.ChangePoints > 5 {
+		score += 0.10
 	}
 
 	return math.Min(1.0, score)
@@ -944,41 +1747,63 @@ func calculateEMA(vals []float64, alpha float64) float64 {
 }
 
 func calculateBurstiness(vals []float64) float64 {
-	if len(vals) < 3 {
+	if len(vals) < 5 {
 		return 0
 	}
 
-	maxVals := make([]float64, 0, len(vals)/3)
-	for i := 0; i < len(vals); i += 3 {
-		end := i + 3
-		if end > len(vals) {
-			end = len(vals)
+	avgVal := mean(vals)
+	if avgVal == 0 {
+		return 0
+	}
+
+	varianceRatio := variance(vals) / avgVal
+	if varianceRatio < 0 {
+		varianceRatio = 0
+	}
+
+	sorted := make([]float64, len(vals))
+	copy(sorted, vals)
+	sort.Float64s(sorted)
+
+	p90 := percentile(sorted, 0.90)
+	p50 := percentile(sorted, 0.50)
+	p10 := percentile(sorted, 0.10)
+
+	var peakRatio float64
+	if p50 > 0 {
+		peakRatio = (p90 - p10) / p50
+	}
+
+	windowSize := 5
+	if len(vals) < windowSize {
+		windowSize = len(vals)
+	}
+	rollingVar := make([]float64, 0)
+	for i := windowSize; i < len(vals); i++ {
+		window := vals[i-windowSize : i]
+		rollingVar = append(rollingVar, variance(window))
+	}
+	var variabilityOfVariability float64
+	if len(rollingVar) > 1 {
+		variabilityOfVariability = stdDev(rollingVar) / (mean(rollingVar) + 1e-10)
+	}
+
+	spikeCount := 0
+	threshold := p90
+	for _, v := range vals {
+		if v > threshold {
+			spikeCount++
 		}
-		chunk := vals[i:end]
-		maxVals = append(maxVals, max(chunk))
 	}
+	spikeFrequency := float64(spikeCount) / float64(len(vals))
 
-	if len(maxVals) < 2 {
-		return 0
-	}
+	burstiness := 0.0
+	burstiness += math.Min(1.0, varianceRatio/avgVal) * 0.25
+	burstiness += math.Min(1.0, peakRatio/3.0) * 0.30
+	burstiness += math.Min(1.0, variabilityOfVariability) * 0.25
+	burstiness += spikeFrequency * 0.20
 
-	avgMax := mean(maxVals)
-	stdMax := stdDev(maxVals)
-
-	overallMean := mean(vals)
-	if overallMean == 0 {
-		return 0
-	}
-
-	cv := stdMax / avgMax
-	peakToMean := avgMax / overallMean
-
-	burstiness := (cv + peakToMean/10) / 2
-	if burstiness > 1 {
-		burstiness = 1
-	}
-
-	return burstiness
+	return math.Min(1.0, burstiness)
 }
 
 func calculateTrendSlope(data []TimeSeriesPoint) float64 {
@@ -1016,24 +1841,73 @@ func calculateTrendSlope(data []TimeSeriesPoint) float64 {
 func classifyStability(cv float64) string {
 	if cv < 0.1 {
 		return "very_stable"
-	} else if cv < 0.2 {
+	} else if cv < 0.25 {
 		return "stable"
-	} else if cv < 0.4 {
+	} else if cv < 0.45 {
 		return "moderate"
-	} else if cv < 0.6 {
+	} else if cv < 0.7 {
+		return "variable"
+	}
+	return "highly_variable"
+}
+
+func classifyStabilityMulti(cv, trendStrength, autocorr float64, changePoints int, periodicityScore float64) string {
+	stabilityScore := 0.0
+
+	if cv < 0.1 {
+		stabilityScore += 2.0
+	} else if cv < 0.25 {
+		stabilityScore += 1.5
+	} else if cv < 0.45 {
+		stabilityScore += 1.0
+	} else if cv < 0.7 {
+		stabilityScore += 0.5
+	}
+
+	if trendStrength < 0.1 {
+		stabilityScore += 1.0
+	} else if trendStrength < 0.3 {
+		stabilityScore += 0.5
+	}
+
+	if autocorr > 0.7 {
+		stabilityScore += 0.5
+	}
+
+	if changePoints == 0 {
+		stabilityScore += 0.5
+	} else if changePoints > 3 {
+		stabilityScore -= 0.5
+	}
+
+	if periodicityScore > 0.5 {
+		stabilityScore += 0.5
+	} else if periodicityScore > 0.3 {
+		stabilityScore += 0.25
+	}
+
+	if stabilityScore >= 3.5 {
+		return "very_stable"
+	} else if stabilityScore >= 2.5 {
+		return "stable"
+	} else if stabilityScore >= 1.5 {
+		return "moderate"
+	} else if stabilityScore >= 0.5 {
 		return "variable"
 	}
 	return "highly_variable"
 }
 
 func classifyLoad(meanQPS float64) string {
-	if meanQPS < 100 {
+	if meanQPS < 50 {
+		return "very_light"
+	} else if meanQPS < 200 {
 		return "light"
 	} else if meanQPS < 1000 {
 		return "moderate"
-	} else if meanQPS < 10000 {
+	} else if meanQPS < 5000 {
 		return "heavy"
-	} else if meanQPS < 50000 {
+	} else if meanQPS < 20000 {
 		return "very_heavy"
 	}
 	return "extreme"
@@ -1042,22 +1916,58 @@ func classifyLoad(meanQPS float64) string {
 func classifyTraffic(profile *LoadProfile) string {
 	pattern := profile.DailyPattern
 	weekly := profile.WeeklyPattern
+	char := profile.Characteristics
+	qps := profile.QPSProfile
 
-	hasDailyPattern := pattern.PeakToOffPeak > 1.5
-	hasWeeklyPattern := weekly.WeekendDrop > 0.2
-	isBusinessHours := pattern.BusinessHours.Ratio > 1.2
+	hasDailyPattern := pattern.PeakToOffPeak > 1.4
+	hasStrongDailyPattern := pattern.PeakToOffPeak > 2.0
+	hasWeeklyPattern := math.Abs(weekly.WeekendDrop) > 0.15
+	isBusinessHours := pattern.BusinessHours.Ratio > 1.15
+	isHighlyVariable := qps.CV > 0.5
+	isBursty := qps.PeakToAvg > 4 || char.Burstiness > 0.4
+	isConstant := qps.CV < 0.15 && qps.PeakToAvg < 2
+	hasMultimodal := char.Seasonality > 0.3 && pattern.PatternStrength > 0.2
 
-	if hasDailyPattern && hasWeeklyPattern && isBusinessHours {
+	if hasStrongDailyPattern && hasWeeklyPattern && isBusinessHours {
 		return "business_traffic"
-	} else if hasDailyPattern && !hasWeeklyPattern {
+	}
+
+	if hasDailyPattern && hasWeeklyPattern {
+		return "periodic_with_weekly_variation"
+	}
+
+	if hasStrongDailyPattern {
 		return "daily_periodic"
-	} else if !hasDailyPattern && profile.QPSProfile.CV < 0.2 {
+	}
+
+	if hasDailyPattern && !hasWeeklyPattern {
+		return "daily_periodic"
+	}
+
+	if isConstant {
 		return "constant"
-	} else if profile.QPSProfile.PeakToAvg > 5 {
+	}
+
+	if isBursty && isHighlyVariable {
+		return "highly_bursty"
+	}
+
+	if isBursty {
 		return "bursty"
-	} else if profile.Characteristics.Burstiness > 0.5 {
+	}
+
+	if isHighlyVariable && char.Burstiness > 0.5 {
 		return "unpredictable"
 	}
+
+	if hasMultimodal {
+		return "multimodal"
+	}
+
+	if isHighlyVariable {
+		return "variable"
+	}
+
 	return "mixed"
 }
 
