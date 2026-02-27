@@ -438,12 +438,37 @@ func analyzeQPSProfile(data []TimeSeriesPoint) QPSProfile {
 	copy(sorted, vals)
 	sort.Float64s(sorted)
 
+	var filteredVals []float64
+	if len(sorted) >= 10 {
+		q1 := percentile(sorted, 0.25)
+		q3 := percentile(sorted, 0.75)
+		iqr := q3 - q1
+		lowerBound := q1 - 3*iqr
+		upperBound := q3 + 3*iqr
+
+		for _, v := range vals {
+			if v >= lowerBound && v <= upperBound {
+				filteredVals = append(filteredVals, v)
+			}
+		}
+
+		if len(filteredVals) < len(vals)/2 {
+			filteredVals = vals
+		}
+	} else {
+		filteredVals = vals
+	}
+
+	filteredSorted := make([]float64, len(filteredVals))
+	copy(filteredSorted, filteredVals)
+	sort.Float64s(filteredSorted)
+
 	profile := QPSProfile{
 		Min:    sorted[0],
 		Max:    sorted[len(sorted)-1],
-		Mean:   mean(vals),
-		Median: median(sorted),
-		StdDev: stdDev(vals),
+		Mean:   mean(filteredVals),
+		Median: median(filteredSorted),
+		StdDev: stdDev(filteredVals),
 	}
 
 	if len(sorted) >= 10 {
