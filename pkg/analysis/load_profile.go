@@ -458,8 +458,9 @@ func calculateStabilityScore(profile *LoadProfile) float64 {
 		score -= 0.1
 	}
 
-	if profile.Characteristics.ChangePoints > 3 {
-		score -= 0.1 * float64(profile.Characteristics.ChangePoints-3)
+	if profile.Characteristics.ChangePoints > 5 {
+		changePointPenalty := math.Min(0.3, 0.05*float64(profile.Characteristics.ChangePoints-5))
+		score -= changePointPenalty
 	}
 
 	if profile.Characteristics.NoiseLevel > 0.5 {
