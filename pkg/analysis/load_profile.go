@@ -464,18 +464,18 @@ func analyzeQPSProfile(data []TimeSeriesPoint) QPSProfile {
 	sort.Float64s(filteredSorted)
 
 	profile := QPSProfile{
-		Min:    sorted[0],
-		Max:    sorted[len(sorted)-1],
+		Min:    filteredSorted[0],
+		Max:    filteredSorted[len(filteredSorted)-1],
 		Mean:   mean(filteredVals),
 		Median: median(filteredSorted),
 		StdDev: stdDev(filteredVals),
 	}
 
-	if len(sorted) >= 10 {
-		profile.P10 = percentile(sorted, 0.10)
-		profile.P90 = percentile(sorted, 0.90)
-		profile.P99 = percentile(sorted, 0.99)
-		profile.IQR = percentile(sorted, 0.75) - percentile(sorted, 0.25)
+	if len(filteredSorted) >= 10 {
+		profile.P10 = percentile(filteredSorted, 0.10)
+		profile.P90 = percentile(filteredSorted, 0.90)
+		profile.P99 = percentile(filteredSorted, 0.99)
+		profile.IQR = percentile(filteredSorted, 0.75) - percentile(filteredSorted, 0.25)
 	}
 
 	if profile.Mean > 0 {
@@ -488,6 +488,9 @@ func analyzeQPSProfile(data []TimeSeriesPoint) QPSProfile {
 			profile.PeakToAvg = 100
 		}
 		profile.CV = profile.StdDev / profile.Mean
+		if profile.CV > 10 {
+			profile.CV = 10
+		}
 	}
 
 	profile.Skewness = skewness(vals)
