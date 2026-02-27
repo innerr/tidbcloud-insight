@@ -466,6 +466,12 @@ func calculateStabilityScore(profile *LoadProfile) float64 {
 		score -= 0.1
 	}
 
+	if profile.Periodicity.PeriodicityScore > 0.5 {
+		score += 0.15
+	} else if profile.Periodicity.PeriodicityScore > 0.3 {
+		score += 0.1
+	}
+
 	return math.Max(0, math.Min(1, score))
 }
 
@@ -808,17 +814,28 @@ func analyzeResourceEfficiency(profile *LoadProfile) ResourceEfficiency {
 	qps := profile.QPSProfile
 	char := profile.Characteristics
 
-	if qps.Mean > 0 && qps.StdDev > 0 {
-		stableQPS := qps.Mean - qps.StdDev
-		eff.QPSEfficiency = stableQPS / qps.Max
+	if qps.Max > 0 {
+		eff.QPSEfficiency = qps.Mean / qps.Max
+		if eff.QPSEfficiency > 1 {
+			eff.QPSEfficiency = 1
+		}
 	}
 
-	eff.PeakUtilization = math.Min(1.0, qps.PeakToAvg/3)
+	peakUtil := 0.0
+	if qps.PeakToAvg > 1 {
+		peakUtil = (qps.PeakToAvg - 1) / 4.0
+	}
+	eff.PeakUtilization = math.Min(1.0, peakUtil)
 
-	avgUtil := 1.0 - qps.CV
-	eff.AvgUtilization = math.Max(0, avgUtil)
+	eff.AvgUtilization = math.Max(0, 1.0-qps.CV)
 
-	eff.EfficiencyScore = (eff.QPSEfficiency*0.4 + (1-eff.PeakUtilization)*0.3 + eff.AvgUtilization*0.3)
+	periodicityBonus := 0.0
+	if profile.Periodicity.PeriodicityScore > 0.3 {
+		periodicityBonus = 0.1
+	}
+
+	eff.EfficiencyScore = (eff.QPSEfficiency*0.3 + (1-eff.PeakUtilization)*0.25 + eff.AvgUtilization*0.25 + periodicityBonus)
+	eff.EfficiencyScore = math.Min(1.0, eff.EfficiencyScore)
 
 	if eff.EfficiencyScore > 0.7 {
 		eff.Recommendation = "well_optimized"
@@ -1386,7 +1403,7 @@ func analyzeCharacteristics(data []TimeSeriesPoint, profile *LoadProfile) Charac
 	char.ChangePoints = detectChangePoints(data)
 	char.AnomalyScore = calculateAnomalyScore(vals, profile)
 
-	char.StabilityClass = classifyStabilityMulti(profile.QPSProfile.CV, char.TrendStrength, char.Autocorrelation, char.ChangePoints)
+	char.StabilityClass = classifyStabilityMulti(profile.QPSProfile.CV, char.TrendStrength, char.Autocorrelation, char.ChangePoints, profile.Periodicity.PeriodicityScore)
 	char.LoadClass = classifyLoad(profile.QPSProfile.Mean)
 	char.TrafficType = classifyTraffic(profile)
 
@@ -1792,7 +1809,7 @@ func classifyStability(cv float64) string {
 	return "highly_variable"
 }
 
-func classifyStabilityMulti(cv, trendStrength, autocorr float64, changePoints int) string {
+func classifyStabilityMulti(cv, trendStrength, autocorr float64, changePoints int, periodicityScore float64) string {
 	stabilityScore := 0.0
 
 	if cv < 0.1 {
@@ -1819,6 +1836,12 @@ func classifyStabilityMulti(cv, trendStrength, autocorr float64, changePoints in
 		stabilityScore += 0.5
 	} else if changePoints > 3 {
 		stabilityScore -= 0.5
+	}
+
+	if periodicityScore > 0.5 {
+		stabilityScore += 0.5
+	} else if periodicityScore > 0.3 {
+		stabilityScore += 0.25
 	}
 
 	if stabilityScore >= 3.5 {
