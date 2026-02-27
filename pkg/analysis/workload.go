@@ -26,21 +26,35 @@ type TiKVOpStats struct {
 	P99Latency  float64 `json:"p99_latency_ms"`
 }
 
+type SQLClassification struct {
+	Category           string  `json:"category"`
+	DDLRatio           float64 `json:"ddl_ratio"`
+	DMLRatio           float64 `json:"dml_ratio"`
+	DQLRatio           float64 `json:"dql_ratio"`
+	TransactionalRatio float64 `json:"transactional_ratio"`
+	AnalyticalRatio    float64 `json:"analytical_ratio"`
+	SimpleQueryRatio   float64 `json:"simple_query_ratio"`
+	ComplexQueryRatio  float64 `json:"complex_query_ratio"`
+	BatchRatio         float64 `json:"batch_ratio"`
+	InteractiveRatio   float64 `json:"interactive_ratio"`
+}
+
 type WorkloadProfile struct {
-	SQLTypes           []SQLTypeStats `json:"sql_types"`
-	TiKVOps            []TiKVOpStats  `json:"tikv_ops"`
-	ReadRatio          float64        `json:"read_ratio"`
-	WriteRatio         float64        `json:"write_ratio"`
-	InternalRatio      float64        `json:"internal_ratio"`
-	IsReadHeavy        bool           `json:"is_read_heavy"`
-	IsWriteHeavy       bool           `json:"is_write_heavy"`
-	DominantSQLType    string         `json:"dominant_sql_type"`
-	DominantTiKVOp     string         `json:"dominant_tikv_op"`
-	ComplexityScore    float64        `json:"complexity_score"`
-	BalanceScore       float64        `json:"balance_score"`
-	WriteAmplification float64        `json:"write_amplification"`
-	TransactionPattern string         `json:"transaction_pattern"`
-	HotspotRisk        string         `json:"hotspot_risk"`
+	SQLTypes           []SQLTypeStats    `json:"sql_types"`
+	TiKVOps            []TiKVOpStats     `json:"tikv_ops"`
+	ReadRatio          float64           `json:"read_ratio"`
+	WriteRatio         float64           `json:"write_ratio"`
+	InternalRatio      float64           `json:"internal_ratio"`
+	IsReadHeavy        bool              `json:"is_read_heavy"`
+	IsWriteHeavy       bool              `json:"is_write_heavy"`
+	DominantSQLType    string            `json:"dominant_sql_type"`
+	DominantTiKVOp     string            `json:"dominant_tikv_op"`
+	ComplexityScore    float64           `json:"complexity_score"`
+	BalanceScore       float64           `json:"balance_score"`
+	WriteAmplification float64           `json:"write_amplification"`
+	TransactionPattern string            `json:"transaction_pattern"`
+	HotspotRisk        string            `json:"hotspot_risk"`
+	SQLClassification  SQLClassification `json:"sql_classification"`
 }
 
 type WorkloadAnomaly struct {
@@ -78,6 +92,7 @@ func AnalyzeWorkloadProfile(
 
 		profile.ComplexityScore = calculateComplexityScore(sqlTypeData)
 		profile.BalanceScore = calculateBalanceScore(profile.SQLTypes)
+		profile.SQLClassification = classifySQL(profile.SQLTypes, sqlTypeData)
 	}
 
 	if len(tikvOpData) > 0 {
@@ -629,4 +644,109 @@ func PrintWorkloadProfile(profile *WorkloadProfile) {
 	}
 
 	fmt.Println()
+}
+
+func classifySQL(sqlTypes []SQLTypeStats, sqlTypeData map[string][]TimeSeriesPoint) SQLClassification {
+	class := SQLClassification{}
+
+	ddlTypes := map[string]bool{
+		"CreateTable": true, "CreateIndex": true, "CreateDatabase": true,
+		"DropTable": true, "DropIndex": true, "DropDatabase": true,
+		"AlterTable": true, "AlterIndex": true, "TruncateTable": true,
+		"RenameTable": true, "RenameIndex": true,
+	}
+
+	dmlTypes := map[string]bool{
+		"Insert": true, "Update": true, "Delete": true,
+		"Replace": true, "LoadData": true, "InsertIgnore": true,
+	}
+
+	dqlTypes := map[string]bool{
+		"Select": true, "Show": true, "Explain": true, "Describe": true,
+	}
+
+	transactionalTypes := map[string]bool{
+		"Begin": true, "Commit": true, "Rollback": true,
+		"Savepoint": true, "Set": true, "Use": true,
+	}
+
+	complexTypes := map[string]bool{
+		"Join": true, "Subquery": true, "Union": true,
+		"GroupBy": true, "Having": true, "Distinct": true,
+	}
+
+	var total, ddlTotal, dmlTotal, dqlTotal, txTotal, complexTotal float64
+
+	for _, s := range sqlTypes {
+		total += s.Count
+		if ddlTypes[s.Type] {
+			ddlTotal += s.Count
+		}
+		if dmlTypes[s.Type] {
+			dmlTotal += s.Count
+		}
+		if dqlTypes[s.Type] {
+			dqlTotal += s.Count
+		}
+		if transactionalTypes[s.Type] {
+			txTotal += s.Count
+		}
+	}
+
+	for sqlType, points := range sqlTypeData {
+		if len(points) == 0 {
+			continue
+		}
+		if complexTypes[sqlType] {
+			vals := extractValues(points)
+			for _, v := range vals {
+				complexTotal += v
+			}
+		}
+	}
+
+	if total > 0 {
+		class.DDLRatio = ddlTotal / total
+		class.DMLRatio = dmlTotal / total
+		class.DQLRatio = dqlTotal / total
+		class.TransactionalRatio = txTotal / total
+		class.ComplexQueryRatio = complexTotal / total
+		class.SimpleQueryRatio = 1.0 - class.ComplexQueryRatio
+	}
+
+	if dqlTotal > 0 && dmlTotal > 0 {
+		class.AnalyticalRatio = dqlTotal / (dqlTotal + dmlTotal)
+		class.InteractiveRatio = 1.0 - class.AnalyticalRatio
+	} else if dqlTotal > 0 {
+		class.AnalyticalRatio = 1.0
+	} else if dmlTotal > 0 {
+		class.InteractiveRatio = 1.0
+	}
+
+	if class.DQLRatio > 0.7 {
+		class.BatchRatio = 0.3
+		class.InteractiveRatio = 0.7
+	} else if class.TransactionalRatio > 0.3 {
+		class.BatchRatio = 0.2
+		class.InteractiveRatio = 0.8
+	} else {
+		class.BatchRatio = class.DMLRatio * 0.5
+		class.InteractiveRatio = 1.0 - class.BatchRatio
+	}
+
+	if class.DDLRatio > 0.1 {
+		class.Category = "schema_intensive"
+	} else if class.DMLRatio > 0.5 {
+		class.Category = "write_intensive"
+	} else if class.DQLRatio > 0.7 {
+		class.Category = "read_intensive"
+	} else if class.TransactionalRatio > 0.3 {
+		class.Category = "transactional"
+	} else if class.ComplexQueryRatio > 0.3 {
+		class.Category = "analytical"
+	} else {
+		class.Category = "mixed"
+	}
+
+	return class
 }
