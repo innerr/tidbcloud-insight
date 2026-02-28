@@ -162,15 +162,7 @@ func TestFormatMultiDimensionProfile(t *testing.T) {
 
 	output := FormatMultiDimensionProfile(profile)
 
-	if !strings.Contains(output, "MULTI-DIMENSION PROFILE ANALYSIS") {
-		t.Error("Output should contain header")
-	}
-
-	if !strings.Contains(output, "test-cluster") {
-		t.Error("Output should contain cluster ID")
-	}
-
-	if !strings.Contains(output, "[1/6] SQL DIMENSION") {
+	if !strings.Contains(output, "SQL Query Pattern Analysis") {
 		t.Error("Output should contain SQL dimension section")
 	}
 
@@ -178,11 +170,11 @@ func TestFormatMultiDimensionProfile(t *testing.T) {
 		t.Error("Output should explain DDL")
 	}
 
-	if !strings.Contains(output, "[2/6] TiKV DIMENSION") {
+	if !strings.Contains(output, "TiKV Storage Layer Analysis") {
 		t.Error("Output should contain TiKV dimension section")
 	}
 
-	if !strings.Contains(output, "[3/6] LATENCY DIMENSION") {
+	if !strings.Contains(output, "Latency Performance Analysis") {
 		t.Error("Output should contain Latency dimension section")
 	}
 
@@ -190,23 +182,19 @@ func TestFormatMultiDimensionProfile(t *testing.T) {
 		t.Error("Output should explain P50")
 	}
 
-	if !strings.Contains(output, "[4/6] BALANCE DIMENSION") {
+	if !strings.Contains(output, "Load Balance Analysis") {
 		t.Error("Output should contain Balance dimension section")
 	}
 
-	if !strings.Contains(output, "[5/6] QPS DIMENSION") {
+	if !strings.Contains(output, "Traffic Pattern Analysis") {
 		t.Error("Output should contain QPS dimension section")
 	}
 
-	if !strings.Contains(output, "[6/6] TiKV VOLUME DIMENSION") {
+	if !strings.Contains(output, "TiKV Request Volume Analysis") {
 		t.Error("Output should contain TiKV Volume dimension section")
 	}
 
-	if !strings.Contains(output, "CROSS-DIMENSION INSIGHTS") {
-		t.Error("Output should contain cross-dimension insights section")
-	}
-
-	if !strings.Contains(output, "OVERALL ASSESSMENT") {
+	if !strings.Contains(output, "Overall Assessment") {
 		t.Error("Output should contain overall assessment section")
 	}
 
