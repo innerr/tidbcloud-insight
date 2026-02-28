@@ -9,111 +9,73 @@ import (
 
 // FormatMultiDimensionProfile generates a human-readable summary of the multi-dimension analysis.
 // This function provides detailed explanations for each metric to make the output more accessible.
+// Note: For a more integrated report, use FormatLoadProfile instead.
 func FormatMultiDimensionProfile(profile *MultiDimensionProfile) string {
 	if profile == nil {
 		return "No multi-dimension profile data available"
 	}
 
-	var sb strings.Builder
-
-	sb.WriteString("\n" + strings.Repeat("=", 80))
-	sb.WriteString("\nMULTI-DIMENSION PROFILE ANALYSIS")
-	sb.WriteString("\n" + strings.Repeat("=", 80))
-
-	sb.WriteString(fmt.Sprintf("\n\nCluster: %s", profile.ClusterID))
-	sb.WriteString(fmt.Sprintf("\nAnalysis Duration: %.1f hours (%d data points)", profile.DurationHours, profile.Samples))
-
-	sb.WriteString("\n\n" + strings.Repeat("-", 80))
-	sb.WriteString("\n[1/6] SQL DIMENSION - Query Pattern Analysis")
-	sb.WriteString("\n" + strings.Repeat("-", 80))
-	sb.WriteString("\nAnalyzes SQL query patterns to understand workload characteristics")
-	sb.WriteString(formatSQLDimension(&profile.SQLDimension))
-
-	sb.WriteString("\n\n" + strings.Repeat("-", 80))
-	sb.WriteString("\n[2/6] TiKV DIMENSION - Storage Layer Operations")
-	sb.WriteString("\n" + strings.Repeat("-", 80))
-	sb.WriteString("\nAnalyzes TiKV operations to identify storage bottlenecks")
-	sb.WriteString(formatTiKVDimension(&profile.TiKVDimension))
-
-	sb.WriteString("\n\n" + strings.Repeat("-", 80))
-	sb.WriteString("\n[3/6] LATENCY DIMENSION - Performance Characteristics")
-	sb.WriteString("\n" + strings.Repeat("-", 80))
-	sb.WriteString("\nMeasures tail latency and distribution to assess user experience")
-	sb.WriteString(formatLatencyDimension(&profile.LatencyDimension))
-
-	sb.WriteString("\n\n" + strings.Repeat("-", 80))
-	sb.WriteString("\n[4/6] BALANCE DIMENSION - Load Distribution")
-	sb.WriteString("\n" + strings.Repeat("-", 80))
-	sb.WriteString("\nChecks if load is evenly distributed across instances")
-	sb.WriteString(formatBalanceDimension(&profile.BalanceDimension))
-
-	sb.WriteString("\n\n" + strings.Repeat("-", 80))
-	sb.WriteString("\n[5/6] QPS DIMENSION - Traffic Patterns")
-	sb.WriteString("\n" + strings.Repeat("-", 80))
-	sb.WriteString("\nAnalyzes query rate patterns and predicts future traffic")
-	sb.WriteString(formatQPSDimension(&profile.QPSDimension))
-
-	sb.WriteString("\n\n" + strings.Repeat("-", 80))
-	sb.WriteString("\n[6/6] TiKV VOLUME DIMENSION - Request Volume Analysis")
-	sb.WriteString("\n" + strings.Repeat("-", 80))
-	sb.WriteString("\nMeasures TiKV request volume to detect saturation")
-	sb.WriteString(formatTiKVVolumeDimension(&profile.TiKVVolumeDimension))
-
-	sb.WriteString("\n\n" + strings.Repeat("=", 80))
-	sb.WriteString("\nCROSS-DIMENSION INSIGHTS")
-	sb.WriteString("\n" + strings.Repeat("=", 80))
-	sb.WriteString("\nCorrelates metrics across dimensions to identify root causes")
-	sb.WriteString(formatCrossDimensionInsights(&profile.CrossDimensionInsights))
-
-	sb.WriteString("\n\n" + strings.Repeat("=", 80))
-	sb.WriteString("\nOVERALL ASSESSMENT")
-	sb.WriteString("\n" + strings.Repeat("=", 80))
-	sb.WriteString(fmt.Sprintf("\n\nHealth Score: %.1f/100", profile.OverallHealthScore))
-	sb.WriteString(fmt.Sprintf(" [%s]", getHealthScoreDescription(profile.OverallHealthScore)))
-	sb.WriteString(fmt.Sprintf("\nRisk Level: %s", profile.OverallRiskLevel))
-	sb.WriteString(fmt.Sprintf(" - %s", getRiskLevelDescription(profile.OverallRiskLevel)))
-
-	if len(profile.TopRecommendations) > 0 {
-		sb.WriteString("\n\nTop Recommendations:")
-		for i, rec := range profile.TopRecommendations {
-			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, rec))
-		}
-	}
-
-	sb.WriteString("\n")
-
-	return sb.String()
+	return formatIntegratedMultiDimension(profile)
 }
 
 func formatSQLDimension(profile *SQLDimensionProfile) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n\nQuery Type Distribution:")
-	sb.WriteString(fmt.Sprintf("\n  DDL (Schema Changes): %.1f%%", profile.DDLRatio*100))
-	sb.WriteString(" - CREATE, ALTER, DROP, etc.")
-	sb.WriteString(fmt.Sprintf("\n  DML (Data Modifications): %.1f%%", profile.DMLRatio*100))
-	sb.WriteString(" - INSERT, UPDATE, DELETE, etc.")
-	sb.WriteString(fmt.Sprintf("\n  DQL (Queries): %.1f%%", profile.DQLRatio*100))
-	sb.WriteString(" - SELECT, SHOW, etc.")
-	sb.WriteString(fmt.Sprintf("\n  TCL (Transactions): %.1f%%", profile.TCLRatio*100))
-	sb.WriteString(" - BEGIN, COMMIT, ROLLBACK")
+	if profile.DDLRatio > 0 || profile.DMLRatio > 0 || profile.DQLRatio > 0 || profile.TCLRatio > 0 {
+		sb.WriteString("\n\nQuery Type Distribution:")
+		if profile.DDLRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  DDL (Schema Changes): %.1f%%", profile.DDLRatio*100))
+			sb.WriteString(" - CREATE, ALTER, DROP, etc.")
+		}
+		if profile.DMLRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  DML (Data Modifications): %.1f%%", profile.DMLRatio*100))
+			sb.WriteString(" - INSERT, UPDATE, DELETE, etc.")
+		}
+		if profile.DQLRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  DQL (Queries): %.1f%%", profile.DQLRatio*100))
+			sb.WriteString(" - SELECT, SHOW, etc.")
+		}
+		if profile.TCLRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  TCL (Transactions): %.1f%%", profile.TCLRatio*100))
+			sb.WriteString(" - BEGIN, COMMIT, ROLLBACK")
+		}
+	}
 
-	sb.WriteString("\n\nWorkload Characteristics:")
-	sb.WriteString(fmt.Sprintf("\n  Transactional Intensity: %.1f%%", profile.TransactionalIntensity*100))
-	sb.WriteString(" - OLTP operations (INSERT, UPDATE, DELETE)")
-	sb.WriteString(fmt.Sprintf("\n  Analytical Intensity: %.1f%%", profile.AnalyticalIntensity*100))
-	sb.WriteString(" - OLAP operations (complex SELECTs, aggregations)")
-	sb.WriteString(fmt.Sprintf("\n  Batch Operations: %.1f%%", profile.BatchOperationRatio*100))
-	sb.WriteString(" - Bulk operations (LOAD, IMPORT)")
-	sb.WriteString(fmt.Sprintf("\n  Interactive Queries: %.1f%%", profile.InteractiveRatio*100))
-	sb.WriteString(" - Short, frequent queries")
+	if profile.TransactionalIntensity > 0 || profile.AnalyticalIntensity > 0 {
+		sb.WriteString("\n\nWorkload Characteristics:")
+		if profile.TransactionalIntensity > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Transactional Intensity: %.1f%%", profile.TransactionalIntensity*100))
+			sb.WriteString(" - OLTP operations (INSERT, UPDATE, DELETE)")
+		}
+		if profile.AnalyticalIntensity > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Analytical Intensity: %.1f%%", profile.AnalyticalIntensity*100))
+			sb.WriteString(" - OLAP operations (complex SELECTs, aggregations)")
+		}
+		if profile.BatchOperationRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Batch Operations: %.1f%%", profile.BatchOperationRatio*100))
+			sb.WriteString(" - Bulk operations (LOAD, IMPORT)")
+		}
+		if profile.InteractiveRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Interactive Queries: %.1f%%", profile.InteractiveRatio*100))
+			sb.WriteString(" - Short, frequent queries")
+		}
+	}
 
-	sb.WriteString(fmt.Sprintf("\n\nComplexity Index: %.2f", profile.ComplexityIndex))
-	sb.WriteString(" [0-1, higher = more complex queries]")
-	sb.WriteString(fmt.Sprintf("\nResource Hotspot Score: %.2f", profile.ResourceHotspotScore))
-	sb.WriteString(" [0-1, higher = more resource-intensive patterns]")
-	sb.WriteString(fmt.Sprintf("\nPattern Stability: %.2f", profile.PatternStability))
-	sb.WriteString(" [0-1, higher = more consistent query patterns]")
+	if profile.ComplexityIndex > 0 || profile.ResourceHotspotScore > 0 {
+		sb.WriteString("\n\nQuery Analysis:")
+		if profile.ComplexityIndex > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Complexity Index: %.2f", profile.ComplexityIndex))
+			sb.WriteString(" [0-1, higher = more complex queries]")
+		}
+		if profile.ResourceHotspotScore > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Resource Hotspot Score: %.2f", profile.ResourceHotspotScore))
+			sb.WriteString(" [0-1, higher = more resource-intensive patterns]")
+		}
+		if profile.PatternStability >= 0.5 {
+			sb.WriteString(fmt.Sprintf("\n  Pattern Stability: %.2f", profile.PatternStability))
+			sb.WriteString(" [0-1, higher = more consistent query patterns]")
+		}
+	}
 
 	if len(profile.DominantTypes) > 0 {
 		sb.WriteString(fmt.Sprintf("\n\nDominant Query Types: %v", profile.DominantTypes))
@@ -129,35 +91,57 @@ func formatSQLDimension(profile *SQLDimensionProfile) string {
 func formatTiKVDimension(profile *TiKVDimensionProfile) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n\nOperation Distribution:")
-	sb.WriteString(fmt.Sprintf("\n  Read Operations: %.1f%%", profile.ReadOpRatio*100))
-	sb.WriteString(" - Point lookups, range scans")
-	sb.WriteString(fmt.Sprintf("\n  Write Operations: %.1f%%", profile.WriteOpRatio*100))
-	sb.WriteString(" - PUT, DELETE operations")
-	sb.WriteString(fmt.Sprintf("\n  Transaction Operations: %.1f%%", profile.TransactionOpRatio*100))
-	sb.WriteString(" - PREWRITE, COMMIT, ROLLBACK")
-	sb.WriteString(fmt.Sprintf("\n  Coprocessor: %.1f%%", profile.CoprocessorRatio*100))
-	sb.WriteString(" - Distributed computation (SELECT with WHERE/GROUP BY)")
-
-	sb.WriteString("\n\nPerformance Metrics:")
-	sb.WriteString(fmt.Sprintf("\n  Average Latency: %.1f ms", profile.AvgLatencyMs))
-	sb.WriteString(fmt.Sprintf("\n  P99 Latency: %.1f ms", profile.P99LatencyMs))
-	sb.WriteString(" - 99th percentile (worst 1% of requests)")
-	sb.WriteString(fmt.Sprintf("\n  Latency Variability: %.2f", profile.LatencyVariability))
-	sb.WriteString(" [0-1, higher = less predictable]")
-
-	sb.WriteString("\n\nStorage Efficiency:")
-	sb.WriteString(fmt.Sprintf("\n  Write Amplification: %.2fx", profile.WriteAmplification))
-	sb.WriteString(" [lower is better, ideal < 3]")
-	if profile.WriteAmplification > 3 {
-		sb.WriteString(" ⚠️  HIGH - may indicate inefficient write patterns")
+	if profile.ReadOpRatio > 0 || profile.WriteOpRatio > 0 {
+		sb.WriteString("\n\nOperation Distribution:")
+		if profile.ReadOpRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Read Operations: %.1f%%", profile.ReadOpRatio*100))
+			sb.WriteString(" - Point lookups, range scans")
+		}
+		if profile.WriteOpRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Write Operations: %.1f%%", profile.WriteOpRatio*100))
+			sb.WriteString(" - PUT, DELETE operations")
+		}
+		if profile.TransactionOpRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Transaction Operations: %.1f%%", profile.TransactionOpRatio*100))
+			sb.WriteString(" - PREWRITE, COMMIT, ROLLBACK")
+		}
+		if profile.CoprocessorRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Coprocessor: %.1f%%", profile.CoprocessorRatio*100))
+			sb.WriteString(" - Distributed computation (SELECT with WHERE/GROUP BY)")
+		}
 	}
-	sb.WriteString(fmt.Sprintf("\n  Read/Write Balance: %.2f", profile.ReadWriteBalance))
-	sb.WriteString(" [0-1, 1 = perfectly balanced]")
 
-	if profile.BottleneckIndicator != "none" {
+	if profile.AvgLatencyMs > 0 {
+		sb.WriteString("\n\nPerformance Metrics:")
+		sb.WriteString(fmt.Sprintf("\n  Average Latency: %.1f ms", profile.AvgLatencyMs))
+		if profile.P99LatencyMs > 0 {
+			sb.WriteString(fmt.Sprintf("\n  P99 Latency: %.1f ms", profile.P99LatencyMs))
+			sb.WriteString(" - 99th percentile (worst 1% of requests)")
+		}
+		if profile.LatencyVariability > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Latency Variability: %.2f", profile.LatencyVariability))
+			sb.WriteString(" [0-1, higher = less predictable]")
+		}
+	}
+
+	if profile.ReadWriteBalance > 0 {
+		sb.WriteString("\n\nStorage Efficiency:")
+		if profile.WriteAmplification > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Write Amplification: %.2fx", profile.WriteAmplification))
+			sb.WriteString(" [lower is better, ideal < 3]")
+			if profile.WriteAmplification > 3 {
+				sb.WriteString(" ⚠️  HIGH - may indicate inefficient write patterns")
+			}
+		}
+		sb.WriteString(fmt.Sprintf("\n  Read/Write Balance: %.2f", profile.ReadWriteBalance))
+		sb.WriteString(" [0-1, 1 = perfectly balanced]")
+	}
+
+	if profile.BottleneckIndicator != "" && profile.BottleneckIndicator != "none" {
 		sb.WriteString(fmt.Sprintf("\n\n⚠️  Bottleneck Detected: %s", profile.BottleneckIndicator))
-		sb.WriteString(fmt.Sprintf("\n  Bottleneck Score: %.2f", profile.BottleneckScore))
+		if profile.BottleneckScore > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Bottleneck Score: %.2f", profile.BottleneckScore))
+		}
 	}
 
 	if len(profile.HotOpTypes) > 0 {
@@ -170,30 +154,46 @@ func formatTiKVDimension(profile *TiKVDimensionProfile) string {
 func formatLatencyDimension(profile *LatencyDimensionProfile) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n\nTiDB Latency (Query Processing):")
-	sb.WriteString(formatLatencyDetailProfile(&profile.TiDBLatency, "TiDB"))
-
-	sb.WriteString("\n\nTiKV Latency (Storage Operations):")
-	sb.WriteString(formatLatencyDetailProfile(&profile.TiKVLatency, "TiKV"))
-
-	sb.WriteString("\n\nTail Latency Analysis:")
-	sb.WriteString(fmt.Sprintf("\n  Tail Latency Ratio (P99/P50): %.2fx", profile.TailLatencyRatio))
-	sb.WriteString(" [ideal < 5, concerning > 10]")
-	sb.WriteString(fmt.Sprintf("\n  Long Tail Indicator: %s", profile.LongTailIndicator))
-	sb.WriteString(getLongTailDescription(profile.TailLatencyRatio))
-
-	sb.WriteString(fmt.Sprintf("\n\nLatency Spikes: %d detected", profile.SpikeCount))
-	sb.WriteString(fmt.Sprintf("\n  Spike Pattern: %s", profile.SpikePattern))
-	sb.WriteString(fmt.Sprintf("\n  P99 Stability: %.2f", profile.P99Stability))
-	sb.WriteString(" [0-1, higher = more stable tail latency]")
-
-	sb.WriteString(fmt.Sprintf("\n\nTrend: %s", profile.LatencyTrend))
-	if profile.PeriodicLatency {
-		sb.WriteString("\n  ⚠️  Periodic latency pattern detected")
-		sb.WriteString(" - latency varies predictably over time")
+	if profile.TiDBLatency.MeanMs > 0 {
+		sb.WriteString("\n\nTiDB Latency (Query Processing):")
+		sb.WriteString(formatLatencyDetailProfile(&profile.TiDBLatency, "TiDB"))
 	}
 
-	if profile.BusinessHourLatency > 0 {
+	if profile.TiKVLatency.MeanMs > 0 {
+		sb.WriteString("\n\nTiKV Latency (Storage Operations):")
+		sb.WriteString(formatLatencyDetailProfile(&profile.TiKVLatency, "TiKV"))
+	}
+
+	if profile.TailLatencyRatio > 0 {
+		sb.WriteString("\n\nTail Latency Analysis:")
+		sb.WriteString(fmt.Sprintf("\n  Tail Latency Ratio (P99/P50): %.2fx", profile.TailLatencyRatio))
+		sb.WriteString(" [ideal < 5, concerning > 10]")
+		if profile.LongTailIndicator != "" {
+			sb.WriteString(fmt.Sprintf("\n  Long Tail Indicator: %s", profile.LongTailIndicator))
+			sb.WriteString(getLongTailDescription(profile.TailLatencyRatio))
+		}
+	}
+
+	if profile.SpikeCount > 0 {
+		sb.WriteString(fmt.Sprintf("\n\nLatency Spikes: %d detected", profile.SpikeCount))
+		if profile.SpikePattern != "" {
+			sb.WriteString(fmt.Sprintf("\n  Spike Pattern: %s", profile.SpikePattern))
+		}
+		if profile.P99Stability >= 0.5 {
+			sb.WriteString(fmt.Sprintf("\n  P99 Stability: %.2f", profile.P99Stability))
+			sb.WriteString(" [0-1, higher = more stable tail latency]")
+		}
+	}
+
+	if profile.LatencyTrend != "" {
+		sb.WriteString(fmt.Sprintf("\n\nTrend: %s", profile.LatencyTrend))
+		if profile.PeriodicLatency {
+			sb.WriteString("\n  ⚠️  Periodic latency pattern detected")
+			sb.WriteString(" - latency varies predictably over time")
+		}
+	}
+
+	if profile.BusinessHourLatency > 0 && profile.OffPeakLatency > 0 {
 		sb.WriteString(fmt.Sprintf("\n\nBusiness Hours Latency: %.1f ms (9AM-6PM)", profile.BusinessHourLatency))
 		sb.WriteString(fmt.Sprintf("\nOff-Peak Latency: %.1f ms (nights/weekends)", profile.OffPeakLatency))
 	}
@@ -284,49 +284,83 @@ func formatInstanceBalance(detail *InstanceBalanceDetail, component string) stri
 func formatQPSDimension(profile *QPSDimensionProfile) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n\nTraffic Statistics:")
-	sb.WriteString(fmt.Sprintf("\n  Mean QPS: %.1f", profile.MeanQPS))
-	sb.WriteString(" - average queries per second")
-	sb.WriteString(fmt.Sprintf("\n  Peak QPS: %.1f", profile.PeakQPS))
-	sb.WriteString(" - maximum observed QPS")
-	sb.WriteString(fmt.Sprintf("\n  Minimum QPS: %.1f", profile.MinQPS))
-	sb.WriteString(fmt.Sprintf("\n  Peak-to-Average Ratio: %.2fx", profile.PeakToAvgRatio))
-	sb.WriteString(" [> 5 = bursty traffic, > 10 = extreme bursts]")
+	if profile.MeanQPS > 0 {
+		sb.WriteString("\n\nTraffic Statistics:")
+		sb.WriteString(fmt.Sprintf("\n  Mean QPS: %.1f", profile.MeanQPS))
+		sb.WriteString(" - average queries per second")
+		if profile.PeakQPS > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Peak QPS: %.1f", profile.PeakQPS))
+			sb.WriteString(" - maximum observed QPS")
+		}
+		if profile.MinQPS > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Minimum QPS: %.1f", profile.MinQPS))
+		}
+		if profile.PeakToAvgRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Peak-to-Average Ratio: %.2fx", profile.PeakToAvgRatio))
+			sb.WriteString(" [> 5 = bursty traffic, > 10 = extreme bursts]")
+		}
+	}
 
-	sb.WriteString("\n\nTraffic Characteristics:")
-	sb.WriteString(fmt.Sprintf("\n  Coefficient of Variation: %.2f", profile.CV))
-	sb.WriteString(" [std deviation / mean, lower = more stable]")
-	sb.WriteString(fmt.Sprintf("\n  Burstiness Score: %.2f", profile.Burstiness))
-	sb.WriteString(" [0-1, higher = more unpredictable]")
-	sb.WriteString(fmt.Sprintf("\n  Traffic Pattern: %s", profile.QPSPattern))
-	sb.WriteString(getQPSPatternDescription(profile.QPSPattern))
+	if profile.CV > 0 || profile.Burstiness > 0 {
+		sb.WriteString("\n\nTraffic Characteristics:")
+		if profile.CV > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Coefficient of Variation: %.2f", profile.CV))
+			sb.WriteString(" [std deviation / mean, lower = more stable]")
+		}
+		if profile.Burstiness > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Burstiness Score: %.2f", profile.Burstiness))
+			sb.WriteString(" [0-1, higher = more unpredictable]")
+		}
+		if profile.QPSPattern != "" {
+			sb.WriteString(fmt.Sprintf("\n  Traffic Pattern: %s", profile.QPSPattern))
+			sb.WriteString(getQPSPatternDescription(profile.QPSPattern))
+		}
+	}
 
-	sb.WriteString("\n\nSeasonality:")
-	sb.WriteString(fmt.Sprintf("\n  Daily Pattern Strength: %.2f", profile.DailyPatternStrength))
-	sb.WriteString(" [0-1, > 0.3 = significant daily cycles]")
-	sb.WriteString(fmt.Sprintf("\n  Weekly Pattern Strength: %.2f", profile.WeeklyPatternStrength))
-	sb.WriteString(" [0-1, > 0.2 = significant weekly cycles]")
-	sb.WriteString(fmt.Sprintf("\n  Has Seasonality: %v", profile.HasSeasonality))
+	if profile.DailyPatternStrength > 0.3 || profile.WeeklyPatternStrength > 0.2 {
+		sb.WriteString("\n\nSeasonality:")
+		if profile.DailyPatternStrength > 0.3 {
+			sb.WriteString(fmt.Sprintf("\n  Daily Pattern Strength: %.2f", profile.DailyPatternStrength))
+			sb.WriteString(" [0-1, > 0.3 = significant daily cycles]")
+		}
+		if profile.WeeklyPatternStrength > 0.2 {
+			sb.WriteString(fmt.Sprintf("\n  Weekly Pattern Strength: %.2f", profile.WeeklyPatternStrength))
+			sb.WriteString(" [0-1, > 0.2 = significant weekly cycles]")
+		}
+		sb.WriteString(fmt.Sprintf("\n  Has Seasonality: %v", profile.HasSeasonality))
+	}
 
 	if len(profile.PeakHours) > 0 {
 		sb.WriteString(fmt.Sprintf("\n\nPeak Hours: %v", profile.PeakHours))
 		sb.WriteString(" - hours with highest QPS (0-23)")
 	}
-	sb.WriteString(fmt.Sprintf("\nBusiness Hour QPS: %.1f", profile.BusinessHourQPS))
-	sb.WriteString(" (9AM-6PM)")
-	sb.WriteString(fmt.Sprintf("\nOff-Peak QPS: %.1f", profile.OffPeakQPS))
-	sb.WriteString(" (nights/weekends)")
+	if profile.BusinessHourQPS > 0 {
+		sb.WriteString(fmt.Sprintf("\nBusiness Hour QPS: %.1f", profile.BusinessHourQPS))
+		sb.WriteString(" (9AM-6PM)")
+	}
+	if profile.OffPeakQPS > 0 {
+		sb.WriteString(fmt.Sprintf("\nOff-Peak QPS: %.1f", profile.OffPeakQPS))
+		sb.WriteString(" (nights/weekends)")
+	}
 
-	sb.WriteString("\n\nTrend Analysis:")
-	sb.WriteString(fmt.Sprintf("\n  Trend Direction: %s", profile.TrendDirection))
-	sb.WriteString(fmt.Sprintf("\n  Trend Strength: %.2f", profile.TrendStrength))
-	sb.WriteString(" [0-1, higher = stronger trend]")
-	sb.WriteString(fmt.Sprintf("\n  24h Forecast: %.1f QPS", profile.ForecastNext24H))
-	sb.WriteString(fmt.Sprintf("\n  Forecast Confidence: %.2f", profile.ForecastConfidence))
-	sb.WriteString(" [0-1, higher = more reliable prediction]")
+	if profile.TrendDirection != "" {
+		sb.WriteString("\n\nTrend Analysis:")
+		sb.WriteString(fmt.Sprintf("\n  Trend Direction: %s", profile.TrendDirection))
+		if profile.TrendStrength > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Trend Strength: %.2f", profile.TrendStrength))
+			sb.WriteString(" [0-1, higher = stronger trend]")
+		}
+		if profile.ForecastNext24H > 0 && profile.ForecastConfidence >= 0.5 {
+			sb.WriteString(fmt.Sprintf("\n  24h Forecast: %.1f QPS", profile.ForecastNext24H))
+			sb.WriteString(fmt.Sprintf("\n  Forecast Confidence: %.2f", profile.ForecastConfidence))
+			sb.WriteString(" [0-1, higher = more reliable prediction]")
+		}
+	}
 
-	sb.WriteString(fmt.Sprintf("\n\nCritical Load Indicator: %s", profile.CriticalLoadIndicator))
-	sb.WriteString(getCriticalLoadDescription(profile.CriticalLoadIndicator))
+	if profile.CriticalLoadIndicator != "" && profile.CriticalLoadIndicator != "normal" {
+		sb.WriteString(fmt.Sprintf("\n\nCritical Load Indicator: %s", profile.CriticalLoadIndicator))
+		sb.WriteString(getCriticalLoadDescription(profile.CriticalLoadIndicator))
+	}
 
 	return sb.String()
 }
@@ -334,36 +368,70 @@ func formatQPSDimension(profile *QPSDimensionProfile) string {
 func formatTiKVVolumeDimension(profile *TiKVVolumeDimensionProfile) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n\nRequest Volume:")
-	sb.WriteString(fmt.Sprintf("\n  Total Requests: %.0f", profile.TotalRequests))
-	sb.WriteString(fmt.Sprintf("\n  Mean RPS: %.1f", profile.MeanRPS))
-	sb.WriteString(" - requests per second")
-	sb.WriteString(fmt.Sprintf("\n  Peak RPS: %.1f", profile.PeakRPS))
-	sb.WriteString(fmt.Sprintf("\n  Peak-to-Average Ratio: %.2fx", profile.PeakToAvgRatio))
+	if profile.TotalRequests > 0 || profile.MeanRPS > 0 {
+		sb.WriteString("\n\nRequest Volume:")
+		if profile.TotalRequests > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Total Requests: %.0f", profile.TotalRequests))
+		}
+		if profile.MeanRPS > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Mean RPS: %.1f", profile.MeanRPS))
+			sb.WriteString(" - requests per second")
+		}
+		if profile.PeakRPS > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Peak RPS: %.1f", profile.PeakRPS))
+		}
+		if profile.PeakToAvgRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Peak-to-Average Ratio: %.2fx", profile.PeakToAvgRatio))
+		}
+	}
 
-	sb.WriteString("\n\nRead/Write Breakdown:")
-	sb.WriteString(fmt.Sprintf("\n  Read RPS: %.1f", profile.ReadRPS))
-	sb.WriteString(fmt.Sprintf("\n  Write RPS: %.1f", profile.WriteRPS))
-	sb.WriteString(fmt.Sprintf("\n  Read/Write Ratio: %.2f", profile.ReadWriteRatio))
-	sb.WriteString(fmt.Sprintf("\n  Write Amplification: %.2fx", profile.WriteAmplification))
+	if profile.ReadRPS > 0 || profile.WriteRPS > 0 {
+		sb.WriteString("\n\nRead/Write Breakdown:")
+		if profile.ReadRPS > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Read RPS: %.1f", profile.ReadRPS))
+		}
+		if profile.WriteRPS > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Write RPS: %.1f", profile.WriteRPS))
+		}
+		if profile.ReadWriteRatio > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Read/Write Ratio: %.2f", profile.ReadWriteRatio))
+		}
+		if profile.WriteAmplification > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Write Amplification: %.2fx", profile.WriteAmplification))
+		}
+	}
 
-	sb.WriteString("\n\nOperation Types:")
-	sb.WriteString(fmt.Sprintf("\n  Transaction Volume: %.0f", profile.TransactionVolume))
-	sb.WriteString(fmt.Sprintf("\n  Coprocessor Volume: %.0f", profile.CoprocessorVolume))
-	sb.WriteString(fmt.Sprintf("\n  Daily Volume Pattern: %.2f", profile.DailyVolumePattern))
+	if profile.TransactionVolume > 0 || profile.CoprocessorVolume > 0 {
+		sb.WriteString("\n\nOperation Types:")
+		if profile.TransactionVolume > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Transaction Volume: %.0f", profile.TransactionVolume))
+		}
+		if profile.CoprocessorVolume > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Coprocessor Volume: %.0f", profile.CoprocessorVolume))
+		}
+		if profile.DailyVolumePattern > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Daily Volume Pattern: %.2f", profile.DailyVolumePattern))
+		}
+	}
 
-	sb.WriteString(fmt.Sprintf("\n\nBottleneck: %s", profile.BottleneckType))
-	if profile.BottleneckType != "none" {
-		sb.WriteString(fmt.Sprintf("\n  Bottleneck Score: %.2f", profile.BottleneckScore))
+	if profile.BottleneckType != "" && profile.BottleneckType != "none" {
+		sb.WriteString(fmt.Sprintf("\n\nBottleneck: %s", profile.BottleneckType))
+		if profile.BottleneckScore > 0 {
+			sb.WriteString(fmt.Sprintf("\n  Bottleneck Score: %.2f", profile.BottleneckScore))
+		}
 	}
 
 	if profile.HotRegionIndicator {
 		sb.WriteString("\n\n⚠️  Hot region detected - some regions receiving disproportionate traffic")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n\nVolume Trend: %s", profile.VolumeTrend))
-	sb.WriteString(fmt.Sprintf("\nSaturation Risk: %s", profile.SaturationRisk))
-	sb.WriteString(getSaturationRiskDescription(profile.SaturationRisk))
+	if profile.VolumeTrend != "" {
+		sb.WriteString(fmt.Sprintf("\n\nVolume Trend: %s", profile.VolumeTrend))
+	}
+	if profile.SaturationRisk != "" && profile.SaturationRisk != "low" {
+		sb.WriteString(fmt.Sprintf("\nSaturation Risk: %s", profile.SaturationRisk))
+		sb.WriteString(getSaturationRiskDescription(profile.SaturationRisk))
+	}
 
 	return sb.String()
 }
@@ -548,7 +616,7 @@ func FormatLoadProfile(profile *LoadProfile) string {
 	sb.WriteString(fmt.Sprintf("\nData Points: %d", profile.Samples))
 
 	if profile.MultiDimension != nil {
-		sb.WriteString(formatMultiDimensionSummary(profile.MultiDimension))
+		sb.WriteString(formatIntegratedMultiDimension(profile.MultiDimension))
 	}
 
 	if hasSignificantDailyPattern(&profile.DailyPattern) {
@@ -572,55 +640,87 @@ func FormatLoadProfile(profile *LoadProfile) string {
 	return sb.String()
 }
 
-func formatMultiDimensionSummary(profile *MultiDimensionProfile) string {
+func formatIntegratedMultiDimension(profile *MultiDimensionProfile) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n\n" + strings.Repeat("=", 80))
-	sb.WriteString("\nMULTI-DIMENSION PROFILE ANALYSIS")
-	sb.WriteString("\n" + strings.Repeat("=", 80))
+	if profile.SQLDimension.PatternStability >= 0.5 {
+		sb.WriteString("\n\n" + strings.Repeat("-", 80))
+		sb.WriteString("\nSQL Query Pattern Analysis")
+		sb.WriteString("\n" + strings.Repeat("-", 80))
+		sb.WriteString(formatSQLDimension(&profile.SQLDimension))
+	}
 
-	sb.WriteString("\n\n[1/6] SQL DIMENSION - Query Pattern Analysis")
-	sb.WriteString("\nAnalyzes SQL query patterns to understand workload characteristics")
-	sb.WriteString(formatSQLDimension(&profile.SQLDimension))
+	if hasTiKVData(&profile.TiKVDimension) {
+		sb.WriteString("\n\n" + strings.Repeat("-", 80))
+		sb.WriteString("\nTiKV Storage Layer Analysis")
+		sb.WriteString("\n" + strings.Repeat("-", 80))
+		sb.WriteString(formatTiKVDimension(&profile.TiKVDimension))
+	}
 
-	sb.WriteString("\n\n[2/6] TiKV DIMENSION - Storage Layer Operations")
-	sb.WriteString("\nAnalyzes TiKV operations to identify storage bottlenecks")
-	sb.WriteString(formatTiKVDimension(&profile.TiKVDimension))
+	if hasLatencyData(&profile.LatencyDimension) {
+		sb.WriteString("\n\n" + strings.Repeat("-", 80))
+		sb.WriteString("\nLatency Performance Analysis")
+		sb.WriteString("\n" + strings.Repeat("-", 80))
+		sb.WriteString(formatLatencyDimension(&profile.LatencyDimension))
+	}
 
-	sb.WriteString("\n\n[3/6] LATENCY DIMENSION - Performance Characteristics")
-	sb.WriteString("\nMeasures tail latency and distribution to assess user experience")
-	sb.WriteString(formatLatencyDimension(&profile.LatencyDimension))
+	if hasBalanceData(&profile.BalanceDimension) {
+		sb.WriteString("\n\n" + strings.Repeat("-", 80))
+		sb.WriteString("\nLoad Balance Analysis")
+		sb.WriteString("\n" + strings.Repeat("-", 80))
+		sb.WriteString(formatBalanceDimension(&profile.BalanceDimension))
+	}
 
-	sb.WriteString("\n\n[4/6] BALANCE DIMENSION - Load Distribution")
-	sb.WriteString("\nChecks if load is evenly distributed across instances")
-	sb.WriteString(formatBalanceDimension(&profile.BalanceDimension))
+	if hasQPSData(&profile.QPSDimension) {
+		sb.WriteString("\n\n" + strings.Repeat("-", 80))
+		sb.WriteString("\nTraffic Pattern Analysis")
+		sb.WriteString("\n" + strings.Repeat("-", 80))
+		sb.WriteString(formatQPSDimension(&profile.QPSDimension))
+	}
 
-	sb.WriteString("\n\n[5/6] QPS DIMENSION - Traffic Patterns")
-	sb.WriteString("\nAnalyzes query rate patterns and predicts future traffic")
-	sb.WriteString(formatQPSDimension(&profile.QPSDimension))
+	if hasTiKVVolumeData(&profile.TiKVVolumeDimension) {
+		sb.WriteString("\n\n" + strings.Repeat("-", 80))
+		sb.WriteString("\nTiKV Request Volume Analysis")
+		sb.WriteString("\n" + strings.Repeat("-", 80))
+		sb.WriteString(formatTiKVVolumeDimension(&profile.TiKVVolumeDimension))
+	}
 
-	sb.WriteString("\n\n[6/6] TiKV VOLUME DIMENSION - Request Volume Analysis")
-	sb.WriteString("\nMeasures TiKV request volume to detect saturation")
-	sb.WriteString(formatTiKVVolumeDimension(&profile.TiKVVolumeDimension))
-
-	sb.WriteString("\n\nCROSS-DIMENSION INSIGHTS")
-	sb.WriteString("\nCorrelates metrics across dimensions to identify root causes")
-	sb.WriteString(formatCrossDimensionInsights(&profile.CrossDimensionInsights))
-
-	sb.WriteString("\n\nOVERALL ASSESSMENT")
+	sb.WriteString("\n\n" + strings.Repeat("-", 80))
+	sb.WriteString("\nOverall Assessment")
+	sb.WriteString("\n" + strings.Repeat("-", 80))
 	sb.WriteString(fmt.Sprintf("\n  Health Score: %.1f/100", profile.OverallHealthScore))
 	sb.WriteString(fmt.Sprintf(" [%s]", getHealthScoreDescription(profile.OverallHealthScore)))
 	sb.WriteString(fmt.Sprintf("\n  Risk Level: %s", profile.OverallRiskLevel))
 	sb.WriteString(fmt.Sprintf(" - %s", getRiskLevelDescription(profile.OverallRiskLevel)))
 
 	if len(profile.TopRecommendations) > 0 {
-		sb.WriteString("\n\n  Top Recommendations:")
+		sb.WriteString("\n\n  Recommendations:")
 		for i, rec := range profile.TopRecommendations {
 			sb.WriteString(fmt.Sprintf("\n    %d. %s", i+1, rec))
 		}
 	}
 
 	return sb.String()
+}
+
+func hasTiKVData(profile *TiKVDimensionProfile) bool {
+	return profile.ReadOpRatio > 0 || profile.WriteOpRatio > 0 || profile.AvgLatencyMs > 0
+}
+
+func hasLatencyData(profile *LatencyDimensionProfile) bool {
+	return profile.TiDBLatency.MeanMs > 0 || profile.TiKVLatency.MeanMs > 0
+}
+
+func hasBalanceData(profile *BalanceDimensionProfile) bool {
+	return profile.TiDBBalance.InstanceCount > 0 || profile.TiKVBalance.InstanceCount > 0
+}
+
+func hasQPSData(profile *QPSDimensionProfile) bool {
+	return profile.MeanQPS > 0
+}
+
+func hasTiKVVolumeData(profile *TiKVVolumeDimensionProfile) bool {
+	return profile.MeanRPS > 0 || profile.TotalRequests > 0
 }
 
 func hasSignificantDailyPattern(pattern *DailyPattern) bool {
