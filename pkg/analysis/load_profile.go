@@ -2135,6 +2135,9 @@ func PrintLoadProfile(profile *LoadProfile, jsonOutput bool) {
 	if profile.Workload != nil {
 		PrintWorkloadProfile(profile.Workload)
 	}
+	if profile.InstanceSkew != nil {
+		fmt.Println(formatInstanceSkewOutput(profile.InstanceSkew))
+	}
 	if profile.MultiDimension != nil {
 		fmt.Println(FormatMultiDimensionProfile(profile.MultiDimension))
 	}
@@ -2572,7 +2575,56 @@ func stringsRepeat(s string, n int) string {
 func mustMarshalJSON(v interface{}) string {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		return ""
 	}
 	return string(data)
+}
+
+func formatInstanceSkewOutput(skew *InstanceSkewProfile) string {
+	var sb strings.Builder
+
+	sb.WriteString(stringsRepeat("-", 60))
+	sb.WriteString("\nINSTANCE SKEW ANALYSIS\n")
+	sb.WriteString(stringsRepeat("-", 60))
+
+	sb.WriteString(fmt.Sprintf("\n\nOverall Assessment:\n"))
+	sb.WriteString(fmt.Sprintf("  Risk Level: %s\n", skew.SkewRiskLevel))
+	sb.WriteString(fmt.Sprintf("  Has QPS Imbalance: %v\n", skew.HasQPSImbalance))
+	sb.WriteString(fmt.Sprintf("  Has Latency Imbalance: %v\n", skew.HasLatencyImbalance))
+	sb.WriteString(fmt.Sprintf("  Hot Instance Count: %d\n", skew.HotInstanceCount))
+
+	if skew.TiDBSkew.InstanceCount > 0 {
+		sb.WriteString(fmt.Sprintf("\nTiDB Instances:\n"))
+		sb.WriteString(formatSkewDetail(&skew.TiDBSkew))
+	}
+
+	if skew.TiKVSkew.InstanceCount > 0 {
+		sb.WriteString(fmt.Sprintf("\nTiKV Instances:\n"))
+		sb.WriteString(formatSkewDetail(&skew.TiKVSkew))
+	}
+
+	if skew.Recommendation != "" {
+		sb.WriteString(fmt.Sprintf("\nRecommendation: %s\n", skew.Recommendation))
+	}
+
+	return sb.String()
+}
+
+func formatSkewDetail(detail *InstanceSkewDetail) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("  Instance Count: %d\n", detail.InstanceCount))
+	sb.WriteString(fmt.Sprintf("  QPS Skew Coefficient: %.2f\n", detail.QPSSkewCoefficient))
+	sb.WriteString(fmt.Sprintf("  Latency Skew Coefficient: %.2f\n", detail.LatencySkewCoefficient))
+	sb.WriteString(fmt.Sprintf("  Max/Min QPS Ratio: %.2fx\n", detail.MaxQPSRatio))
+
+	if len(detail.HotInstances) > 0 {
+		sb.WriteString(fmt.Sprintf("  Hot Instances (overloaded): %v\n", detail.HotInstances))
+	}
+
+	if len(detail.ColdInstances) > 0 {
+		sb.WriteString(fmt.Sprintf("  Cold Instances (underutilized): %v\n", detail.ColdInstances))
+	}
+
+	return sb.String()
 }

@@ -2,7 +2,9 @@ package analysis
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 )
 
 // FormatMultiDimensionProfile generates a human-readable summary of the multi-dimension analysis.
@@ -526,4 +528,462 @@ func getDegradationRiskDescription(risk string) string {
 	default:
 		return ""
 	}
+}
+
+// FormatLoadProfile generates a comprehensive human-readable report including
+// multi-dimension analysis, daily/weekly patterns, and instance skew analysis.
+func FormatLoadProfile(profile *LoadProfile) string {
+	if profile == nil {
+		return "No load profile data available"
+	}
+
+	var sb strings.Builder
+
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nCOMPREHENSIVE LOAD PROFILE REPORT")
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+
+	sb.WriteString(fmt.Sprintf("\n\nCluster: %s", profile.ClusterID))
+	sb.WriteString(fmt.Sprintf("\nAnalysis Duration: %.1f hours (%.1f days)", profile.DurationHours, profile.DurationHours/24))
+	sb.WriteString(fmt.Sprintf("\nData Points: %d", profile.Samples))
+
+	if profile.MultiDimension != nil {
+		sb.WriteString(formatMultiDimensionSummary(profile.MultiDimension))
+	}
+
+	if hasSignificantDailyPattern(&profile.DailyPattern) {
+		sb.WriteString(formatDailyPattern(&profile.DailyPattern))
+	}
+
+	if hasSignificantWeeklyPattern(&profile.WeeklyPattern) {
+		sb.WriteString(formatWeeklyPattern(&profile.WeeklyPattern))
+	}
+
+	if profile.InstanceSkew != nil {
+		sb.WriteString(formatInstanceSkew(profile.InstanceSkew))
+	}
+
+	if profile.Insights != nil {
+		sb.WriteString(formatInsights(profile.Insights))
+	}
+
+	sb.WriteString("\n")
+
+	return sb.String()
+}
+
+func formatMultiDimensionSummary(profile *MultiDimensionProfile) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nMULTI-DIMENSION PROFILE ANALYSIS")
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+
+	sb.WriteString("\n\n[1/6] SQL DIMENSION - Query Pattern Analysis")
+	sb.WriteString("\nAnalyzes SQL query patterns to understand workload characteristics")
+	sb.WriteString(formatSQLDimension(&profile.SQLDimension))
+
+	sb.WriteString("\n\n[2/6] TiKV DIMENSION - Storage Layer Operations")
+	sb.WriteString("\nAnalyzes TiKV operations to identify storage bottlenecks")
+	sb.WriteString(formatTiKVDimension(&profile.TiKVDimension))
+
+	sb.WriteString("\n\n[3/6] LATENCY DIMENSION - Performance Characteristics")
+	sb.WriteString("\nMeasures tail latency and distribution to assess user experience")
+	sb.WriteString(formatLatencyDimension(&profile.LatencyDimension))
+
+	sb.WriteString("\n\n[4/6] BALANCE DIMENSION - Load Distribution")
+	sb.WriteString("\nChecks if load is evenly distributed across instances")
+	sb.WriteString(formatBalanceDimension(&profile.BalanceDimension))
+
+	sb.WriteString("\n\n[5/6] QPS DIMENSION - Traffic Patterns")
+	sb.WriteString("\nAnalyzes query rate patterns and predicts future traffic")
+	sb.WriteString(formatQPSDimension(&profile.QPSDimension))
+
+	sb.WriteString("\n\n[6/6] TiKV VOLUME DIMENSION - Request Volume Analysis")
+	sb.WriteString("\nMeasures TiKV request volume to detect saturation")
+	sb.WriteString(formatTiKVVolumeDimension(&profile.TiKVVolumeDimension))
+
+	sb.WriteString("\n\nCROSS-DIMENSION INSIGHTS")
+	sb.WriteString("\nCorrelates metrics across dimensions to identify root causes")
+	sb.WriteString(formatCrossDimensionInsights(&profile.CrossDimensionInsights))
+
+	sb.WriteString("\n\nOVERALL ASSESSMENT")
+	sb.WriteString(fmt.Sprintf("\n  Health Score: %.1f/100", profile.OverallHealthScore))
+	sb.WriteString(fmt.Sprintf(" [%s]", getHealthScoreDescription(profile.OverallHealthScore)))
+	sb.WriteString(fmt.Sprintf("\n  Risk Level: %s", profile.OverallRiskLevel))
+	sb.WriteString(fmt.Sprintf(" - %s", getRiskLevelDescription(profile.OverallRiskLevel)))
+
+	if len(profile.TopRecommendations) > 0 {
+		sb.WriteString("\n\n  Top Recommendations:")
+		for i, rec := range profile.TopRecommendations {
+			sb.WriteString(fmt.Sprintf("\n    %d. %s", i+1, rec))
+		}
+	}
+
+	return sb.String()
+}
+
+func hasSignificantDailyPattern(pattern *DailyPattern) bool {
+	return pattern.PeakToOffPeak > 1.5 || pattern.NightDrop > 0.15
+}
+
+func formatDailyPattern(pattern *DailyPattern) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nDAILY PATTERN ANALYSIS - Hourly Traffic Distribution")
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nAnalyzes hourly patterns to identify peak and off-peak periods")
+
+	sb.WriteString("\n\nHourly QPS Distribution:")
+
+	maxAvg := 0.0
+	for _, v := range pattern.HourlyAvg {
+		if v > maxAvg {
+			maxAvg = v
+		}
+	}
+
+	if maxAvg > 0 {
+		sb.WriteString("\n")
+		for h := 0; h < 24; h++ {
+			avg := pattern.HourlyAvg[h]
+			if avg == 0 {
+				continue
+			}
+
+			marker := "  "
+			isPeak := false
+			isOffPeak := false
+			for _, ph := range pattern.PeakHours {
+				if ph == h {
+					isPeak = true
+					break
+				}
+			}
+			for _, oh := range pattern.OffPeakHours {
+				if oh == h {
+					isOffPeak = true
+					break
+				}
+			}
+
+			if isPeak {
+				marker = "▲ "
+			} else if isOffPeak {
+				marker = "▼ "
+			}
+
+			barWidth := 30
+			bars := int(avg / maxAvg * float64(barWidth))
+			bar := strings.Repeat("█", bars) + strings.Repeat("░", barWidth-bars)
+
+			sb.WriteString(fmt.Sprintf("\n  %s%02d:00 |%s| %.1f QPS", marker, h, bar, avg))
+		}
+		sb.WriteString("\n\n  Legend: ▲ Peak hour  ▼ Off-peak hour")
+	}
+
+	sb.WriteString(fmt.Sprintf("\n\nPeak Analysis:"))
+	sb.WriteString(fmt.Sprintf("\n  Peak Hours: %v", formatHours(pattern.PeakHours)))
+	sb.WriteString(" - hours with highest traffic")
+	sb.WriteString(fmt.Sprintf("\n  Off-Peak Hours: %v", formatHours(pattern.OffPeakHours)))
+	sb.WriteString(" - hours with lowest traffic")
+	sb.WriteString(fmt.Sprintf("\n  Peak/Off-Peak Ratio: %.2fx", pattern.PeakToOffPeak))
+	sb.WriteString(" - [> 1.5 = significant daily pattern]")
+
+	if pattern.NightDrop > 0 && len(pattern.NightDropHours) > 0 {
+		sb.WriteString(fmt.Sprintf("\n  Night Traffic Drop: %.1f%%", pattern.NightDrop*100))
+		sb.WriteString(fmt.Sprintf(" (%02d:00-%02d:00)", pattern.NightDropHours[0], pattern.NightDropHours[len(pattern.NightDropHours)-1]))
+	}
+
+	if pattern.BusinessHours.Ratio > 0 {
+		sb.WriteString(fmt.Sprintf("\n\nBusiness Hours Analysis:"))
+		sb.WriteString(fmt.Sprintf("\n  Business Hours: %02d:00-%02d:00", pattern.BusinessHours.StartHour, pattern.BusinessHours.EndHour))
+		sb.WriteString(fmt.Sprintf("\n  Business Hours QPS: %.1f", pattern.BusinessHours.AvgQPS))
+		changePercent := (pattern.BusinessHours.Ratio - 1) * 100
+		if changePercent < 0 {
+			changePercent = -changePercent
+		}
+		sb.WriteString(fmt.Sprintf("\n  Business Hours vs Average: %.1f%% %s",
+			changePercent,
+			getChangeDirection(pattern.BusinessHours.Ratio-1)))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n\nPattern Quality Metrics:"))
+	sb.WriteString(fmt.Sprintf("\n  Daily Pattern Strength: %.0f%%", (pattern.PeakToOffPeak-1)*50))
+	sb.WriteString(" - [based on peak/off-peak ratio]")
+	sb.WriteString(fmt.Sprintf("\n  Pattern Consistency: %.0f%%", pattern.ConsistencyScore*100))
+	sb.WriteString(" - [how consistent across days]")
+	sb.WriteString(fmt.Sprintf("\n  Periodicity Score: %.0f%%", pattern.PeriodicityScore*100))
+	sb.WriteString(" - [strength of daily cycle]")
+
+	return sb.String()
+}
+
+func hasSignificantWeeklyPattern(pattern *WeeklyPattern) bool {
+	return len(pattern.DailyAvg) >= 3
+}
+
+func formatWeeklyPattern(pattern *WeeklyPattern) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nWEEKLY PATTERN ANALYSIS - Day-of-Week Traffic Patterns")
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nAnalyzes weekly patterns to identify weekday/weekend differences")
+
+	weekendDiff := pattern.WeekendDrop
+	if weekendDiff < 0 {
+		weekendDiff = -weekendDiff
+	}
+	isPeriodic := weekendDiff > 0.10
+
+	sb.WriteString("\n\nDaily QPS Comparison:")
+
+	days := make([]string, 0, len(pattern.DailyAvg))
+	for d := range pattern.DailyAvg {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+
+	maxAvg := 0.0
+	for _, avg := range pattern.DailyAvg {
+		if avg > maxAvg {
+			maxAvg = avg
+		}
+	}
+
+	if maxAvg > 0 {
+		sb.WriteString("\n")
+		barWidth := 25
+		for _, d := range days {
+			t, _ := time.Parse("2006-01-02", d)
+			dayName := t.Weekday().String()[:3]
+			avg := pattern.DailyAvg[d]
+
+			bars := int(avg / maxAvg * float64(barWidth))
+			bar := strings.Repeat("█", bars) + strings.Repeat("░", barWidth-bars)
+
+			marker := "  "
+			weekday := t.Weekday()
+			if weekday == time.Saturday || weekday == time.Sunday {
+				marker = "W "
+			}
+
+			sb.WriteString(fmt.Sprintf("\n  %s%s (%s) |%s| %.1f QPS", marker, d, dayName, bar, avg))
+		}
+		sb.WriteString("\n\n  Legend: W = Weekend")
+	}
+
+	if isPeriodic {
+		sb.WriteString("\n\nWeekday vs Weekend Comparison:")
+
+		weekdayMax := pattern.WeekdayAvg
+		weekendMax := pattern.WeekendAvg
+		maxVal := weekdayMax
+		if weekendMax > maxVal {
+			maxVal = weekendMax
+		}
+
+		weekdayBars := 0
+		weekendBars := 0
+		if maxVal > 0 {
+			weekdayBars = int(weekdayMax / maxVal * 25)
+			weekendBars = int(weekendMax / maxVal * 25)
+		}
+
+		weekdayBar := strings.Repeat("█", weekdayBars) + strings.Repeat("░", 25-weekdayBars)
+		weekendBar := strings.Repeat("█", weekendBars) + strings.Repeat("░", 25-weekendBars)
+
+		sb.WriteString(fmt.Sprintf("\n  Weekdays:  |%s| %.1f QPS", weekdayBar, weekdayMax))
+		sb.WriteString(fmt.Sprintf("\n  Weekends:  |%s| %.1f QPS", weekendBar, weekendMax))
+	}
+
+	sb.WriteString("\n\nWeekly Statistics:")
+	sb.WriteString(fmt.Sprintf("\n  Weekday Average: %.1f QPS", pattern.WeekdayAvg))
+	sb.WriteString(fmt.Sprintf("\n  Weekend Average: %.1f QPS", pattern.WeekendAvg))
+
+	if pattern.WeekendDrop > 0 {
+		sb.WriteString(fmt.Sprintf("\n  Weekend Traffic Drop: %.1f%%", pattern.WeekendDrop*100))
+		sb.WriteString(" - weekends have less traffic")
+	} else if pattern.WeekendDrop < 0 {
+		sb.WriteString(fmt.Sprintf("\n  Weekend Traffic Increase: %.1f%%", -pattern.WeekendDrop*100))
+		sb.WriteString(" - weekends have more traffic")
+	}
+
+	if pattern.IsWeekdayHeavy {
+		sb.WriteString("\n  Pattern: Weekday-heavy traffic (typical business workload)")
+	} else if pattern.WeekendDrop < 0 {
+		sb.WriteString("\n  Pattern: Weekend-heavy traffic (unusual)")
+	} else {
+		sb.WriteString("\n  Pattern: Similar weekday/weekend traffic (continuous workload)")
+	}
+
+	if isPeriodic {
+		dropPct := pattern.WeekendDrop
+		if dropPct < 0 {
+			dropPct = -dropPct
+		}
+		sb.WriteString(fmt.Sprintf("\n  Weekly Pattern Strength: %.0f%%", dropPct*100))
+		sb.WriteString(" - [significant weekly cycle]")
+	}
+
+	sb.WriteString(fmt.Sprintf("\n  Pattern Consistency: %.0f%%", pattern.ConsistencyScore*100))
+	sb.WriteString(" - [how consistent across weeks]")
+
+	return sb.String()
+}
+
+func formatInstanceSkew(skew *InstanceSkewProfile) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nDATA SKEW ANALYSIS - Instance Load Distribution")
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nAnalyzes load distribution across TiDB and TiKV instances to detect hotspots")
+
+	sb.WriteString(fmt.Sprintf("\n\nOverall Skew Assessment:"))
+	sb.WriteString(fmt.Sprintf("\n  Risk Level: %s", skew.SkewRiskLevel))
+	sb.WriteString(getSkewRiskDescription(skew.SkewRiskLevel))
+	sb.WriteString(fmt.Sprintf("\n  Has QPS Imbalance: %v", skew.HasQPSImbalance))
+	sb.WriteString(fmt.Sprintf("\n  Has Latency Imbalance: %v", skew.HasLatencyImbalance))
+	sb.WriteString(fmt.Sprintf("\n  Hot Instance Count: %d", skew.HotInstanceCount))
+	if skew.HotInstanceCount > 0 {
+		sb.WriteString(" ⚠️  - instances handling significantly more load")
+	}
+
+	if skew.TiDBSkew.InstanceCount > 0 {
+		sb.WriteString("\n\nTiDB Instances:")
+		sb.WriteString(formatInstanceSkewDetail(&skew.TiDBSkew, "TiDB"))
+	}
+
+	if skew.TiKVSkew.InstanceCount > 0 {
+		sb.WriteString("\n\nTiKV Instances:")
+		sb.WriteString(formatInstanceSkewDetail(&skew.TiKVSkew, "TiKV"))
+	}
+
+	if skew.Recommendation != "" {
+		sb.WriteString(fmt.Sprintf("\n\n💡 Recommendation: %s", skew.Recommendation))
+	}
+
+	return sb.String()
+}
+
+func formatInstanceSkewDetail(detail *InstanceSkewDetail, component string) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("\n  Instance Count: %d", detail.InstanceCount))
+	sb.WriteString(fmt.Sprintf("\n  QPS Skew Coefficient: %.2f", detail.QPSSkewCoefficient))
+	sb.WriteString(" [0 = perfectly balanced, > 0.5 = significant imbalance]")
+	sb.WriteString(fmt.Sprintf("\n  Latency Skew Coefficient: %.2f", detail.LatencySkewCoefficient))
+	sb.WriteString(" [0 = consistent latency, > 0.5 = significant variation]")
+	sb.WriteString(fmt.Sprintf("\n  Max/Min QPS Ratio: %.2fx", detail.MaxQPSRatio))
+	sb.WriteString(" - ratio between busiest and least busy instance")
+
+	if len(detail.HotInstances) > 0 {
+		sb.WriteString(fmt.Sprintf("\n\n  🔥 Hot Instances (overloaded): %v", detail.HotInstances))
+		sb.WriteString("\n    - handling significantly more load than average")
+		sb.WriteString("\n    - consider redistributing load or adding resources")
+	}
+
+	if len(detail.ColdInstances) > 0 {
+		sb.WriteString(fmt.Sprintf("\n\n  ❄️  Cold Instances (underutilized): %v", detail.ColdInstances))
+		sb.WriteString("\n    - handling significantly less load than average")
+		sb.WriteString("\n    - may indicate inefficient load balancing")
+	}
+
+	if len(detail.QPSDistribution) > 0 && detail.InstanceCount <= 10 {
+		sb.WriteString("\n\n  QPS Distribution by Instance:")
+		instances := make([]string, 0, len(detail.QPSDistribution))
+		for inst := range detail.QPSDistribution {
+			instances = append(instances, inst)
+		}
+		sort.Strings(instances)
+
+		maxQPS := 0.0
+		for _, qps := range detail.QPSDistribution {
+			if qps > maxQPS {
+				maxQPS = qps
+			}
+		}
+
+		for _, inst := range instances {
+			qps := detail.QPSDistribution[inst]
+			barWidth := 20
+			bars := 0
+			if maxQPS > 0 {
+				bars = int(qps / maxQPS * float64(barWidth))
+			}
+			bar := strings.Repeat("█", bars) + strings.Repeat("░", barWidth-bars)
+			sb.WriteString(fmt.Sprintf("\n    %s |%s| %.1f QPS", inst, bar, qps))
+		}
+	}
+
+	return sb.String()
+}
+
+func formatInsights(insights *ClusterInsights) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n\n" + strings.Repeat("=", 80))
+	sb.WriteString("\nCLUSTER INSIGHTS & RECOMMENDATIONS")
+	sb.WriteString("\n" + strings.Repeat("=", 80))
+
+	sb.WriteString(fmt.Sprintf("\n\nOverall Health: %s", insights.OverallHealth))
+	sb.WriteString(fmt.Sprintf("\n  Performance Score: %.1f/100", insights.PerformanceScore))
+	sb.WriteString(fmt.Sprintf("\n  Stability Score: %.1f/100", insights.StabilityScore))
+	sb.WriteString(fmt.Sprintf("\n  Efficiency Score: %.1f/100", insights.EfficiencyScore))
+	sb.WriteString(fmt.Sprintf("\n  Pattern Type: %s", insights.PatternType))
+
+	if len(insights.RiskFactors) > 0 {
+		sb.WriteString("\n\n⚠️  Risk Factors:")
+		for i, risk := range insights.RiskFactors {
+			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, risk))
+		}
+	}
+
+	if len(insights.AnomalyIndicators) > 0 {
+		sb.WriteString("\n\n🔍 Anomaly Indicators:")
+		for i, anomaly := range insights.AnomalyIndicators {
+			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, anomaly))
+		}
+	}
+
+	if len(insights.OptimizationOpportunities) > 0 {
+		sb.WriteString("\n\n💡 Optimization Opportunities:")
+		for i, opt := range insights.OptimizationOpportunities {
+			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, opt))
+		}
+	}
+
+	if len(insights.RecommendedActions) > 0 {
+		sb.WriteString("\n\n✅ Recommended Actions:")
+		for i, action := range insights.RecommendedActions {
+			sb.WriteString(fmt.Sprintf("\n  %d. %s", i+1, action))
+		}
+	}
+
+	return sb.String()
+}
+
+func getSkewRiskDescription(level string) string {
+	switch level {
+	case "low":
+		return " - Load is well balanced across instances"
+	case "medium":
+		return " - Some instances have noticeably higher load"
+	case "high":
+		return " ⚠️  Significant imbalance detected"
+	default:
+		return ""
+	}
+}
+
+func getChangeDirection(change float64) string {
+	if change > 0 {
+		return "above average"
+	} else if change < 0 {
+		return "below average"
+	}
+	return "at average"
 }
