@@ -1,3 +1,7 @@
+// Package analysis provides comprehensive load profiling for TiDB/TiKV clusters.
+// This file implements the core LoadProfile analysis with QPS patterns, latency
+// distribution, periodicity detection, and workload characterization.
+// It integrates multi-dimension analysis, advanced insights, and correlation analysis.
 package analysis
 
 import (
@@ -10,22 +14,25 @@ import (
 )
 
 type LoadProfile struct {
-	ClusterID          string               `json:"cluster_id"`
-	DurationHours      float64              `json:"duration_hours"`
-	Samples            int                  `json:"samples"`
-	QPSProfile         QPSProfile           `json:"qps_profile"`
-	LatencyProfile     LatencyProfile       `json:"latency_profile"`
-	DailyPattern       DailyPattern         `json:"daily_pattern"`
-	WeeklyPattern      WeeklyPattern        `json:"weekly_pattern"`
-	MonthlyPattern     MonthlyPattern       `json:"monthly_pattern"`
-	Periodicity        PeriodicityProfile   `json:"periodicity"`
-	Characteristics    Characteristics      `json:"characteristics"`
-	Workload           *WorkloadProfile     `json:"workload,omitempty"`
-	InstanceSkew       *InstanceSkewProfile `json:"instance_skew,omitempty"`
-	Correlation        CorrelationAnalysis  `json:"correlation"`
-	TrendAnalysis      TrendAnalysis        `json:"trend_analysis"`
-	ResourceEfficiency ResourceEfficiency   `json:"resource_efficiency"`
-	Insights           *ClusterInsights     `json:"insights,omitempty"`
+	ClusterID             string                 `json:"cluster_id"`
+	DurationHours         float64                `json:"duration_hours"`
+	Samples               int                    `json:"samples"`
+	QPSProfile            QPSProfile             `json:"qps_profile"`
+	LatencyProfile        LatencyProfile         `json:"latency_profile"`
+	DailyPattern          DailyPattern           `json:"daily_pattern"`
+	WeeklyPattern         WeeklyPattern          `json:"weekly_pattern"`
+	MonthlyPattern        MonthlyPattern         `json:"monthly_pattern"`
+	Periodicity           PeriodicityProfile     `json:"periodicity"`
+	Characteristics       Characteristics        `json:"characteristics"`
+	Workload              *WorkloadProfile       `json:"workload,omitempty"`
+	InstanceSkew          *InstanceSkewProfile   `json:"instance_skew,omitempty"`
+	Correlation           CorrelationAnalysis    `json:"correlation"`
+	TrendAnalysis         TrendAnalysis          `json:"trend_analysis"`
+	ResourceEfficiency    ResourceEfficiency     `json:"resource_efficiency"`
+	Insights              *ClusterInsights       `json:"insights,omitempty"`
+	MultiDimension        *MultiDimensionProfile `json:"multi_dimension,omitempty"`
+	AdvancedInsights      *AdvancedInsights      `json:"advanced_insights,omitempty"`
+	TimeSeriesCorrelation *TimeSeriesCorrelation `json:"time_series_correlation,omitempty"`
 }
 
 type ClusterInsights struct {
@@ -262,6 +269,25 @@ func AnalyzeLoadProfileFull(
 	}
 
 	profile.Insights = generateClusterInsights(profile)
+
+	profile.MultiDimension = AnalyzeMultiDimensionProfile(
+		clusterID,
+		qpsData,
+		latencyData,
+		sqlTypeData,
+		sqlLatencyData,
+		tikvOpData,
+		tikvLatencyData,
+		tidbInstanceQPS,
+		tidbInstanceLatency,
+		tikvInstanceQPS,
+		tikvInstanceLatency,
+	)
+
+	if profile.MultiDimension != nil {
+		profile.AdvancedInsights = GenerateAdvancedInsights(profile.MultiDimension)
+		profile.TimeSeriesCorrelation = AnalyzeTimeSeriesCorrelation(profile.MultiDimension)
+	}
 
 	return profile
 }
