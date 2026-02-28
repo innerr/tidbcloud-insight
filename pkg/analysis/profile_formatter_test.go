@@ -232,3 +232,160 @@ func TestFormatMultiDimensionProfile(t *testing.T) {
 
 	t.Logf("\n%s", output)
 }
+
+func TestFormatLoadProfile(t *testing.T) {
+	profile := &LoadProfile{
+		ClusterID:     "test-cluster",
+		DurationHours: 168.0,
+		Samples:       10080,
+		DailyPattern: DailyPattern{
+			HourlyAvg: map[int]float64{
+				0:  100.0,
+				1:  80.0,
+				2:  60.0,
+				9:  500.0,
+				10: 600.0,
+				11: 550.0,
+				14: 520.0,
+				15: 580.0,
+				16: 540.0,
+			},
+			PeakHours:        []int{10, 11, 14, 15, 16},
+			OffPeakHours:     []int{0, 1, 2, 3, 4},
+			PeakToOffPeak:    6.0,
+			NightDrop:        0.20,
+			NightDropHours:   []int{0, 1, 2, 3, 4, 5},
+			PatternStrength:  0.75,
+			ConsistencyScore: 0.80,
+			PeriodicityScore: 0.85,
+			BusinessHours: BusinessHours{
+				StartHour: 9,
+				EndHour:   18,
+				AvgQPS:    550.0,
+				Ratio:     1.5,
+			},
+		},
+		WeeklyPattern: WeeklyPattern{
+			DailyAvg: map[string]float64{
+				"2024-01-01": 500.0,
+				"2024-01-02": 520.0,
+				"2024-01-03": 510.0,
+				"2024-01-04": 505.0,
+				"2024-01-05": 515.0,
+				"2024-01-06": 350.0,
+				"2024-01-07": 340.0,
+			},
+			WeekdayAvg:       510.0,
+			WeekendAvg:       345.0,
+			WeekendDrop:      0.32,
+			IsWeekdayHeavy:   true,
+			PatternStrength:  0.70,
+			ConsistencyScore: 0.75,
+		},
+		InstanceSkew: &InstanceSkewProfile{
+			TiDBSkew: InstanceSkewDetail{
+				InstanceCount:          3,
+				QPSSkewCoefficient:     0.25,
+				LatencySkewCoefficient: 0.15,
+				MaxQPSRatio:            1.8,
+				MinQPSRatio:            0.6,
+				HotInstances:           []string{"tidb-1"},
+				ColdInstances:          []string{"tidb-3"},
+				QPSDistribution: map[string]float64{
+					"tidb-1": 600.0,
+					"tidb-2": 450.0,
+					"tidb-3": 300.0,
+				},
+			},
+			TiKVSkew: InstanceSkewDetail{
+				InstanceCount:          5,
+				QPSSkewCoefficient:     0.18,
+				LatencySkewCoefficient: 0.12,
+				MaxQPSRatio:            1.5,
+				MinQPSRatio:            0.7,
+				HotInstances:           []string{},
+				ColdInstances:          []string{},
+			},
+			HasQPSImbalance:     true,
+			HasLatencyImbalance: false,
+			SkewRiskLevel:       "medium",
+			HotInstanceCount:    1,
+			Recommendation:      "Consider redistributing load from hot instances",
+		},
+		Insights: &ClusterInsights{
+			OverallHealth:             "Good",
+			PerformanceScore:          85.0,
+			StabilityScore:            80.0,
+			EfficiencyScore:           82.0,
+			PatternType:               "Business hours pattern",
+			RiskFactors:               []string{"Moderate instance skew"},
+			AnomalyIndicators:         []string{},
+			OptimizationOpportunities: []string{"Optimize instance load balancing"},
+			RecommendedActions:        []string{"Monitor hot instances", "Consider scaling"},
+		},
+	}
+
+	output := FormatLoadProfile(profile)
+
+	if !strings.Contains(output, "COMPREHENSIVE LOAD PROFILE REPORT") {
+		t.Error("Output should contain main header")
+	}
+
+	if !strings.Contains(output, "test-cluster") {
+		t.Error("Output should contain cluster ID")
+	}
+
+	if !strings.Contains(output, "DAILY PATTERN ANALYSIS") {
+		t.Error("Output should contain daily pattern section")
+	}
+
+	if !strings.Contains(output, "Hourly QPS Distribution") {
+		t.Error("Output should contain hourly distribution")
+	}
+
+	if !strings.Contains(output, "Peak Hours") {
+		t.Error("Output should identify peak hours")
+	}
+
+	if !strings.Contains(output, "WEEKLY PATTERN ANALYSIS") {
+		t.Error("Output should contain weekly pattern section")
+	}
+
+	if !strings.Contains(output, "Weekday vs Weekend") {
+		t.Error("Output should compare weekday and weekend")
+	}
+
+	if !strings.Contains(output, "Weekend Traffic Drop") {
+		t.Error("Output should show weekend drop")
+	}
+
+	if !strings.Contains(output, "DATA SKEW ANALYSIS") {
+		t.Error("Output should contain data skew section")
+	}
+
+	if !strings.Contains(output, "Instance Load Distribution") {
+		t.Error("Output should describe instance load distribution")
+	}
+
+	if !strings.Contains(output, "Hot Instance Count") {
+		t.Error("Output should show hot instance count")
+	}
+
+	if !strings.Contains(output, "tidb-1") {
+		t.Error("Output should identify hot instance")
+	}
+
+	if !strings.Contains(output, "CLUSTER INSIGHTS") {
+		t.Error("Output should contain insights section")
+	}
+
+	if !strings.Contains(output, "Performance Score") {
+		t.Error("Output should show performance score")
+	}
+
+	if !strings.Contains(output, "Risk Factors") {
+		t.Error("Output should list risk factors")
+	}
+
+	t.Logf("\n%s", output)
+}
