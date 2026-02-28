@@ -1,3 +1,11 @@
+// Package analysis provides comprehensive multi-dimension profiling for TiDB/TiKV clusters.
+// This file implements the 6-dimension analysis framework that combines:
+// 1. SQL Dimension - Fine-grained SQL type classification and resource consumption
+// 2. TiKV Dimension - Request type analysis with latency profiling
+// 3. Latency Dimension - Tail latency, periodicity, and distribution analysis
+// 4. Balance Dimension - Cross-instance load balancing analysis
+// 5. QPS Dimension - TiDB QPS pattern analysis with forecasting
+// 6. TiKV Volume Dimension - Request volume analysis with bottleneck detection
 package analysis
 
 import (
@@ -6,6 +14,9 @@ import (
 	"sort"
 )
 
+// MultiDimensionProfile represents a comprehensive analysis across 6 dimensions.
+// It provides holistic insights by correlating metrics from different dimensions
+// to identify bottlenecks, predict issues, and generate recommendations.
 type MultiDimensionProfile struct {
 	ClusterID              string                     `json:"cluster_id"`
 	DurationHours          float64                    `json:"duration_hours"`
@@ -22,6 +33,9 @@ type MultiDimensionProfile struct {
 	TopRecommendations     []string                   `json:"top_recommendations"`
 }
 
+// SQLDimensionProfile provides fine-grained analysis of SQL query patterns.
+// It classifies queries by type (DDL/DML/DQL/TCL), identifies resource hotspots,
+// and measures workload characteristics like transactional vs analytical intensity.
 type SQLDimensionProfile struct {
 	TypeDistribution       map[string]SQLTypeDetail `json:"type_distribution"`
 	DDLRatio               float64                  `json:"ddl_ratio"`
@@ -39,6 +53,7 @@ type SQLDimensionProfile struct {
 	AnomalyTypes           []string                 `json:"anomaly_types"`
 }
 
+// SQLTypeDetail contains detailed metrics for a specific SQL type.
 type SQLTypeDetail struct {
 	Count              float64 `json:"count"`
 	Percent            float64 `json:"percent"`
@@ -49,6 +64,9 @@ type SQLTypeDetail struct {
 	PeriodicityScore   float64 `json:"periodicity_score"`
 }
 
+// TiKVDimensionProfile analyzes TiKV operation patterns and performance.
+// It categorizes operations by type (read/write/transaction/coprocessor),
+// identifies bottlenecks, and measures write amplification and balance.
 type TiKVDimensionProfile struct {
 	OpDistribution       map[string]TiKVOpDetail `json:"op_distribution"`
 	ReadOpRatio          float64                 `json:"read_op_ratio"`
@@ -68,6 +86,7 @@ type TiKVDimensionProfile struct {
 	PointLookupRatio     float64                 `json:"point_lookup_ratio"`
 }
 
+// TiKVOpDetail contains detailed metrics for a specific TiKV operation type.
 type TiKVOpDetail struct {
 	Count           float64 `json:"count"`
 	Percent         float64 `json:"percent"`
@@ -77,6 +96,8 @@ type TiKVOpDetail struct {
 	LatencyCV       float64 `json:"latency_cv"`
 }
 
+// LatencyDimensionProfile provides comprehensive latency analysis including
+// tail latency, periodicity, distribution, and correlation metrics.
 type LatencyDimensionProfile struct {
 	TiDBLatency         LatencyDetailProfile `json:"tidb_latency"`
 	TiKVLatency         LatencyDetailProfile `json:"tikv_latency"`
@@ -93,6 +114,8 @@ type LatencyDimensionProfile struct {
 	OffPeakLatency      float64              `json:"off_peak_latency"`
 }
 
+// LatencyDetailProfile contains detailed latency distribution metrics
+// including percentiles, skewness, kurtosis, and bucket distribution.
 type LatencyDetailProfile struct {
 	P50Ms              float64         `json:"p50_ms"`
 	P90Ms              float64         `json:"p90_ms"`
@@ -108,6 +131,9 @@ type LatencyDetailProfile struct {
 	OutlierRatio       float64         `json:"outlier_ratio"`
 }
 
+// BalanceDimensionProfile analyzes load distribution across instances.
+// It identifies hot/cold instances, calculates imbalance scores, and
+// provides recommendations for load balancing.
 type BalanceDimensionProfile struct {
 	TiDBBalance           InstanceBalanceDetail `json:"tidb_balance"`
 	TiKVBalance           InstanceBalanceDetail `json:"tikv_balance"`
@@ -122,6 +148,7 @@ type BalanceDimensionProfile struct {
 	Recommendation        string                `json:"recommendation"`
 }
 
+// InstanceBalanceDetail provides per-instance balance metrics.
 type InstanceBalanceDetail struct {
 	InstanceCount          int                `json:"instance_count"`
 	QPSDistribution        map[string]float64 `json:"qps_distribution"`
@@ -189,6 +216,30 @@ type CrossDimensionInsights struct {
 	PerformanceDegradationRisk string   `json:"performance_degradation_risk"`
 }
 
+// AnalyzeMultiDimensionProfile performs comprehensive 6-dimension analysis on TiDB/TiKV metrics.
+// This is the main entry point for multi-dimension profiling that correlates data from:
+// - SQL query patterns (DDL/DML/DQL/TCL classification)
+// - TiKV operations (read/write/transaction patterns)
+// - Latency distribution (tail latency, periodicity)
+// - Instance balance (load distribution across nodes)
+// - QPS patterns (burstiness, trends, forecasting)
+// - TiKV volume (request rates, bottlenecks)
+//
+// Parameters:
+//   - clusterID: Unique identifier for the cluster
+//   - qpsData: Time series of QPS measurements
+//   - latencyData: Time series of latency measurements
+//   - sqlTypeData: SQL type counts grouped by SQL type
+//   - sqlLatencyData: Latency measurements grouped by SQL type
+//   - tikvOpData: TiKV operation counts grouped by operation type
+//   - tikvLatencyData: TiKV latency measurements grouped by operation type
+//   - tidbInstanceQPS: QPS data grouped by TiDB instance
+//   - tidbInstanceLatency: Latency data grouped by TiDB instance
+//   - tikvInstanceQPS: QPS data grouped by TiKV instance
+//   - tikvInstanceLatency: Latency data grouped by TiKV instance
+//
+// Returns a MultiDimensionProfile with comprehensive analysis across all dimensions,
+// including cross-dimension correlations, health scores, and recommendations.
 func AnalyzeMultiDimensionProfile(
 	clusterID string,
 	qpsData []TimeSeriesPoint,

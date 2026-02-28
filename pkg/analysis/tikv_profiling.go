@@ -1,3 +1,6 @@
+// Package analysis implements TiKV operation profiling and bottleneck detection.
+// This file provides per-operation analysis, category-wise summaries,
+// write amplification detection, and TiKV-specific optimization recommendations.
 package analysis
 
 import (

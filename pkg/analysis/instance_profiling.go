@@ -1,3 +1,6 @@
+// Package analysis implements instance-level profiling and hotspot analysis.
+// This file provides per-instance health monitoring, comparative ranking,
+// and temperature-based hotspot detection for TiDB and TiKV instances.
 package analysis
 
 import (

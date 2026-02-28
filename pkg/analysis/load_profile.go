@@ -1,3 +1,7 @@
+// Package analysis provides comprehensive load profiling for TiDB/TiKV clusters.
+// This file implements the core LoadProfile analysis with QPS patterns, latency
+// distribution, periodicity detection, and workload characterization.
+// It integrates multi-dimension analysis, advanced insights, and correlation analysis.
 package analysis
 
 import (

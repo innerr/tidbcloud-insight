@@ -1,3 +1,7 @@
+// Package analysis implements adaptive thresholds and dynamic alerting system.
+// This file provides real-time monitoring with automatic threshold adaptation,
+// alert fatigue detection, and priority-based alert queue management.
+// Inspired by Prometheus alerting best practices and Google SRE principles.
 package analysis
 
 import (

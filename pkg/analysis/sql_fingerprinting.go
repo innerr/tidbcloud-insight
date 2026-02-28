@@ -1,3 +1,6 @@
+// Package analysis implements SQL fingerprinting and pattern analysis.
+// This file provides SQL query classification, complexity scoring,
+// risk assessment, and pattern-based optimization recommendations.
 package analysis
 
 import (

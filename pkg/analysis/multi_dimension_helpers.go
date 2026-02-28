@@ -1,3 +1,6 @@
+// Package analysis provides helper functions for multi-dimension profiling.
+// This file contains utility functions for SQL classification, TiKV operation
+// analysis, latency profiling, and instance balance calculations.
 package analysis
 
 import (

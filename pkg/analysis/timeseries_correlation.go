@@ -1,3 +1,6 @@
+// Package analysis implements time series correlation and anomaly propagation analysis.
+// This file provides cross-correlation, lagged correlation, and causality analysis
+// based on forecasting principles (FPP3) and Numenta Anomaly Benchmark best practices.
 package analysis
 
 import (

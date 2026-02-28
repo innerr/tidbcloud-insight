@@ -1,3 +1,7 @@
+// Package analysis provides advanced insights for TiDB/TiKV performance profiling.
+// This file implements root cause analysis, predictive alerts, capacity planning,
+// and optimization roadmaps based on multi-dimension profiling data.
+// Inspired by Google SRE principles and industry best practices.
 package analysis
 
 import (
