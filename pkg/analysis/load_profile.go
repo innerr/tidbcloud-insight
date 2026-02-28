@@ -2135,6 +2135,9 @@ func PrintLoadProfile(profile *LoadProfile, jsonOutput bool) {
 	if profile.Workload != nil {
 		PrintWorkloadProfile(profile.Workload)
 	}
+	if profile.MultiDimension != nil {
+		fmt.Println(FormatMultiDimensionProfile(profile.MultiDimension))
+	}
 	printSummary(profile)
 }
 
