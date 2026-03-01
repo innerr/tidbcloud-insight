@@ -952,6 +952,14 @@ func formatInstanceSkew(skew *InstanceSkewProfile) string {
 		sb.WriteString(" ⚠️  - instances handling significantly more load")
 	}
 
+	hasTiDBSkew := skew.TiDBSkew.InstanceCount > 0 && (skew.TiDBSkew.QPSSkewCoefficient > 0.1 || skew.TiDBSkew.LatencySkewCoefficient > 0.1)
+	hasTiKVSkew := skew.TiKVSkew.InstanceCount > 0 && (skew.TiKVSkew.QPSSkewCoefficient > 0.1 || skew.TiKVSkew.LatencySkewCoefficient > 0.1)
+
+	if hasTiDBSkew && hasTiKVSkew {
+		sb.WriteString("\n\nCross-Component Correlation Analysis:")
+		sb.WriteString(formatCrossComponentSkewAnalysis(&skew.TiDBSkew, &skew.TiKVSkew))
+	}
+
 	if skew.TiDBSkew.InstanceCount > 0 {
 		sb.WriteString("\n\nTiDB Instances:")
 		sb.WriteString(formatInstanceSkewDetail(&skew.TiDBSkew, "TiDB"))
@@ -967,6 +975,93 @@ func formatInstanceSkew(skew *InstanceSkewProfile) string {
 	}
 
 	return sb.String()
+}
+
+func formatCrossComponentSkewAnalysis(tidbSkew *InstanceSkewDetail, tikvSkew *InstanceSkewDetail) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n  Analyzing correlation between TiDB and TiKV skew patterns:")
+
+	tidbQPSImbalanced := tidbSkew.QPSSkewCoefficient > 0.3
+	tikvLatencyImbalanced := tikvSkew.LatencySkewCoefficient > 0.3
+	tidbLatencyImbalanced := tidbSkew.LatencySkewCoefficient > 0.3
+	tikvQPSImbalanced := tikvSkew.QPSSkewCoefficient > 0.3
+
+	if tidbQPSImbalanced && tikvLatencyImbalanced {
+		sb.WriteString("\n\n  🔍 Pattern Detected: TiDB QPS skew → TiKV latency impact")
+		sb.WriteString(fmt.Sprintf("\n    • TiDB QPS Skew: %.2f", tidbSkew.QPSSkewCoefficient))
+		sb.WriteString(fmt.Sprintf("\n    • TiKV Latency Skew: %.2f", tikvSkew.LatencySkewCoefficient))
+		sb.WriteString("\n    • Analysis: Unbalanced TiDB query distribution is causing")
+		sb.WriteString("\n      some TiKV instances to experience higher latency")
+		sb.WriteString("\n    • Impact: Hot TiDB instances are likely sending more requests")
+		sb.WriteString("\n      to specific TiKV nodes, creating downstream bottlenecks")
+		sb.WriteString("\n    • Action: Consider connection pooling or query routing optimization")
+	}
+
+	if tidbQPSImbalanced && tikvQPSImbalanced {
+		sb.WriteString("\n\n  🔍 Pattern Detected: Correlated QPS skew across components")
+		sb.WriteString(fmt.Sprintf("\n    • TiDB QPS Skew: %.2f", tidbSkew.QPSSkewCoefficient))
+		sb.WriteString(fmt.Sprintf("\n    • TiKV QPS Skew: %.2f", tikvSkew.QPSSkewCoefficient))
+		sb.WriteString("\n    • Analysis: Load imbalance is consistent across the stack")
+		sb.WriteString("\n    • Root Cause: Likely due to data access patterns or region distribution")
+		sb.WriteString("\n    • Impact: System experiencing end-to-end load imbalance")
+		sb.WriteString("\n    • Action: Consider data redistribution or application-level sharding")
+	}
+
+	if tidbLatencyImbalanced && !tikvLatencyImbalanced {
+		sb.WriteString("\n\n  🔍 Pattern Detected: TiDB-side latency variance")
+		sb.WriteString(fmt.Sprintf("\n    • TiDB Latency Skew: %.2f", tidbSkew.LatencySkewCoefficient))
+		sb.WriteString(fmt.Sprintf("\n    • TiKV Latency Skew: %.2f (balanced)", tikvSkew.LatencySkewCoefficient))
+		sb.WriteString("\n    • Analysis: TiDB instances show varying response times")
+		sb.WriteString("\n      but TiKV backend is evenly loaded")
+		sb.WriteString("\n    • Root Cause: Likely TiDB-level resource contention or")
+		sb.WriteString("\n      uneven connection distribution")
+		sb.WriteString("\n    • Action: Check TiDB resource allocation (CPU, memory)")
+	}
+
+	if !tidbQPSImbalanced && tikvLatencyImbalanced {
+		sb.WriteString("\n\n  🔍 Pattern Detected: TiKV-side latency hotspot")
+		sb.WriteString(fmt.Sprintf("\n    • TiDB QPS Skew: %.2f (balanced)", tidbSkew.QPSSkewCoefficient))
+		sb.WriteString(fmt.Sprintf("\n    • TiKV Latency Skew: %.2f", tikvSkew.LatencySkewCoefficient))
+		sb.WriteString("\n    • Analysis: Even TiDB load but uneven TiKV performance")
+		sb.WriteString("\n    • Root Cause: Possible data hotspot, region imbalance,")
+		sb.WriteString("\n      or uneven disk performance on TiKV nodes")
+		sb.WriteString("\n    • Action: Check TiKV region distribution and hardware performance")
+	}
+
+	if !tidbQPSImbalanced && !tikvQPSImbalanced && !tidbLatencyImbalanced && !tikvLatencyImbalanced {
+		sb.WriteString("\n\n  ✓ Well-Balanced System:")
+		sb.WriteString("\n    • Both TiDB and TiKV show balanced load distribution")
+		sb.WriteString("\n    • No significant cross-component imbalance patterns detected")
+		sb.WriteString("\n    • System appears to be well-configured for current workload")
+	}
+
+	sb.WriteString("\n\n  Skew Metrics Comparison:")
+	sb.WriteString(fmt.Sprintf("\n    Component  | QPS Skew | Latency Skew | Status"))
+	sb.WriteString(fmt.Sprintf("\n    -----------|----------|--------------|--------"))
+	sb.WriteString(fmt.Sprintf("\n    TiDB       | %8.2f | %12.2f | %s",
+		tidbSkew.QPSSkewCoefficient, tidbSkew.LatencySkewCoefficient,
+		getSkewStatus(tidbSkew.QPSSkewCoefficient, tidbSkew.LatencySkewCoefficient)))
+	sb.WriteString(fmt.Sprintf("\n    TiKV       | %8.2f | %12.2f | %s",
+		tikvSkew.QPSSkewCoefficient, tikvSkew.LatencySkewCoefficient,
+		getSkewStatus(tikvSkew.QPSSkewCoefficient, tikvSkew.LatencySkewCoefficient)))
+
+	return sb.String()
+}
+
+func getSkewStatus(qpsSkew, latencySkew float64) string {
+	maxSkew := qpsSkew
+	if latencySkew > maxSkew {
+		maxSkew = latencySkew
+	}
+
+	if maxSkew < 0.2 {
+		return "✓ Balanced"
+	} else if maxSkew < 0.5 {
+		return "⚠ Moderate"
+	} else {
+		return "⚠ High"
+	}
 }
 
 func formatInstanceSkewDetail(detail *InstanceSkewDetail, component string) string {
